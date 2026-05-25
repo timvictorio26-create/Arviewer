@@ -20,14 +20,21 @@ let loading = false;
 
 const CAMERA_FOV = 60;
 const HOLD_TIME = 8000;
-const POS_LERP = 0.12;
-const ROT_LERP = 0.1;
-const SCALE_LERP = 0.1;
+const SCAN_SCALE = 0.5;
+const SCAN_EVERY = 3;
+const POS_LERP = 0.05;
+const ROT_LERP = 0.04;
+const SCALE_LERP = 0.05;
+const JUMP_THRESHOLD = 0.15;
 
+let targetPos = new THREE.Vector3(0, 0, -1);
+let targetRotZ = 0;
+let targetScale = 1;
 const smoothPos = new THREE.Vector3(0, 0, -1);
 let smoothRotZ = 0;
 let smoothScale = 1;
 let smoothInitialized = false;
+let frameCount = 0;
 
 let scene, camera, renderer;
 
@@ -88,9 +95,15 @@ function lerpAngle(a, b, t) {
   return a + diff * t;
 }
 
-function estimatePose(loc, vw, vh) {
-  const { topLeftCorner: tl, topRightCorner: tr,
-          bottomRightCorner: br, bottomLeftCorner: bl } = loc;
+function estimatePose(loc, scanW, scanH) {
+  const s = 1 / SCAN_SCALE;
+  const tl = { x: loc.topLeftCorner.x * s, y: loc.topLeftCorner.y * s };
+  const tr = { x: loc.topRightCorner.x * s, y: loc.topRightCorner.y * s };
+  const br = { x: loc.bottomRightCorner.x * s, y: loc.bottomRightCorner.y * s };
+  const bl = { x: loc.bottomLeftCorner.x * s, y: loc.bottomLeftCorner.y * s };
+
+  const vw = scanW * s;
+  const vh = scanH * s;
 
   const cx = (tl.x + tr.x + br.x + bl.x) / 4;
   const cy = (tl.y + tr.y + br.y + bl.y) / 4;
@@ -110,7 +123,6 @@ function estimatePose(loc, vw, vh) {
   const py = -((cy - vh / 2) / fy) * distance;
   const pz = -distance;
 
-  // Stable in-plane rotation from QR top edge
   const hx = tr.x - tl.x;
   const hy = tr.y - tl.y;
   const rotZ = -Math.atan2(hy, hx);
@@ -120,7 +132,8 @@ function estimatePose(loc, vw, vh) {
   return {
     position: new THREE.Vector3(px, py, pz),
     rotZ,
-    scale: modelScale
+    scale: modelScale,
+    corners: { tl, tr, bl, br }
   };
 }
 
@@ -145,18 +158,18 @@ function videoToDisplay(vx, vy, vw, vh) {
   return { x: vx * scale - offX, y: vy * scale - offY };
 }
 
-function loop() {
-  requestAnimationFrame(loop);
-  if (video.readyState < video.HAVE_ENOUGH_DATA) return;
-
+function scanFrame() {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  scanCanvas.width = vw;
-  scanCanvas.height = vh;
-  scanCtx.drawImage(video, 0, 0, vw, vh);
-  const imageData = scanCtx.getImageData(0, 0, vw, vh);
+  const sw = Math.floor(vw * SCAN_SCALE);
+  const sh = Math.floor(vh * SCAN_SCALE);
 
-  const code = jsQR(imageData.data, vw, vh, { inversionAttempts: 'dontInvert' });
+  scanCanvas.width = sw;
+  scanCanvas.height = sh;
+  scanCtx.drawImage(video, 0, 0, sw, sh);
+  const imageData = scanCtx.getImageData(0, 0, sw, sh);
+
+  const code = jsQR(imageData.data, sw, sh, { inversionAttempts: 'dontInvert' });
 
   if (code && code.data) {
     const match = code.data.match(/[?&]id=([a-f0-9-]+)/i);
@@ -168,45 +181,67 @@ function loop() {
         loadNewModel(modelId);
       }
 
-      if (loadedObject) {
-        const pose = estimatePose(code.location, vw, vh);
+      const pose = estimatePose(code.location, sw, sh);
 
-        if (!smoothInitialized) {
-          smoothPos.copy(pose.position);
-          smoothRotZ = pose.rotZ;
-          smoothScale = pose.scale;
-          smoothInitialized = true;
+      if (!smoothInitialized) {
+        targetPos.copy(pose.position);
+        targetRotZ = pose.rotZ;
+        targetScale = pose.scale;
+        smoothPos.copy(pose.position);
+        smoothRotZ = pose.rotZ;
+        smoothScale = pose.scale;
+        smoothInitialized = true;
+      } else {
+        const jump = targetPos.distanceTo(pose.position);
+        const maxJump = JUMP_THRESHOLD * Math.abs(targetPos.z);
+        if (jump < maxJump) {
+          targetPos.copy(pose.position);
+          targetRotZ = pose.rotZ;
+          targetScale = pose.scale;
         } else {
-          smoothPos.lerp(pose.position, POS_LERP);
-          smoothRotZ = lerpAngle(smoothRotZ, pose.rotZ, ROT_LERP);
-          smoothScale += (pose.scale - smoothScale) * SCALE_LERP;
+          targetPos.lerp(pose.position, 0.3);
+          targetRotZ = lerpAngle(targetRotZ, pose.rotZ, 0.3);
+          targetScale += (pose.scale - targetScale) * 0.3;
         }
-
-        loadedObject.position.copy(smoothPos);
-        // Z-up model: XY flat on QR surface, Z toward camera
-        // Only rotate around Z (the normal axis) for in-plane alignment
-        loadedObject.rotation.set(0, 0, smoothRotZ);
-        loadedObject.scale.setScalar(smoothScale);
-        loadedObject.visible = true;
       }
 
-      reticle.classList.add('detected');
-      const tl = videoToDisplay(code.location.topLeftCorner.x, code.location.topLeftCorner.y, vw, vh);
-      const tr = videoToDisplay(code.location.topRightCorner.x, code.location.topRightCorner.y, vw, vh);
-      const bl = videoToDisplay(code.location.bottomLeftCorner.x, code.location.bottomLeftCorner.y, vw, vh);
-      const br = videoToDisplay(code.location.bottomRightCorner.x, code.location.bottomRightCorner.y, vw, vh);
-      setCorner('.tl', tl);
-      setCorner('.tr', tr);
-      setCorner('.bl', bl);
-      setCorner('.br', br);
+      const c = pose.corners;
+      const rvw = video.videoWidth;
+      const rvh = video.videoHeight;
+      setCorner('.tl', videoToDisplay(c.tl.x, c.tl.y, rvw, rvh));
+      setCorner('.tr', videoToDisplay(c.tr.x, c.tr.y, rvw, rvh));
+      setCorner('.bl', videoToDisplay(c.bl.x, c.bl.y, rvw, rvh));
+      setCorner('.br', videoToDisplay(c.br.x, c.br.y, rvw, rvh));
       reticle.style.display = 'block';
+      reticle.classList.add('detected');
     }
-  } else {
-    if (Date.now() - lastDetection > HOLD_TIME) {
-      if (loadedObject) loadedObject.visible = false;
-      reticle.style.display = 'none';
-      reticle.classList.remove('detected');
-    }
+  }
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (video.readyState < video.HAVE_ENOUGH_DATA) return;
+
+  frameCount++;
+  if (frameCount % SCAN_EVERY === 0) {
+    scanFrame();
+  }
+
+  if (loadedObject && smoothInitialized) {
+    smoothPos.lerp(targetPos, POS_LERP);
+    smoothRotZ = lerpAngle(smoothRotZ, targetRotZ, ROT_LERP);
+    smoothScale += (targetScale - smoothScale) * SCALE_LERP;
+
+    loadedObject.position.copy(smoothPos);
+    loadedObject.rotation.set(0, 0, smoothRotZ);
+    loadedObject.scale.setScalar(smoothScale);
+    loadedObject.visible = true;
+  }
+
+  if (Date.now() - lastDetection > HOLD_TIME) {
+    if (loadedObject) loadedObject.visible = false;
+    reticle.style.display = 'none';
+    reticle.classList.remove('detected');
   }
 
   renderer.render(scene, camera);
@@ -267,7 +302,6 @@ async function loadNewModel(modelId) {
       }));
     }
 
-    // Normalize: scale to unit size
     const box = new THREE.Box3().setFromObject(object);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -278,8 +312,6 @@ async function loadNewModel(modelId) {
 
       const scaledBox = new THREE.Box3().setFromObject(object);
       const sc = scaledBox.getCenter(new THREE.Vector3());
-
-      // Center XY on origin, place bottom at Z=0 so it sits on the QR surface
       object.position.set(-sc.x, -sc.y, -scaledBox.min.z);
     }
 
