@@ -58,7 +58,11 @@ app.post('/api/upload', upload.single('model'), async (req, res) => {
   const models = loadModels();
   const id = path.basename(req.file.filename, path.extname(req.file.filename));
   const modelUrl = `/uploads/${req.file.filename}`;
-  const viewerUrl = `/viewer.html?id=${id}`;
+
+  const protocol = req.get('x-forwarded-proto') || req.protocol;
+  const host = req.get('host');
+  const baseUrl = process.env.BASE_URL || `${protocol}://${host}`;
+  const viewerUrl = `${baseUrl}/viewer.html?id=${id}`;
 
   const qrDataUrl = await QRCode.toDataURL(viewerUrl, {
     width: 512,
