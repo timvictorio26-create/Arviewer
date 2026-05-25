@@ -362,12 +362,26 @@ main {
 }
 
 #viewer-controls {
-  padding: 0.75rem;
+  padding: 0.5rem 0.75rem;
   text-align: center;
   background: #16213e;
   color: #888;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
+
+.axis-legend {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.axis-x { color: #ff4444; font-weight: 600; }
+.axis-y { color: #44ff44; font-weight: 600; }
+.axis-z { color: #4488ff; font-weight: 600; }
+.axis-qr { color: #999; }
 
 @media (max-width: 768px) {
   main {

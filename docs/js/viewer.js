@@ -18,7 +18,7 @@ function init() {
 
   const container = canvas.parentElement;
   camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.01, 1000);
-  camera.position.set(3, 2, 3);
+  camera.position.set(2.5, 2, 2.5);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
@@ -30,6 +30,7 @@ function init() {
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+  controls.target.set(0, 0.5, 0);
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
   scene.add(ambientLight);
@@ -42,8 +43,8 @@ function init() {
   dirLight2.position.set(-5, 5, -7);
   scene.add(dirLight2);
 
-  const gridHelper = new THREE.GridHelper(10, 10, 0x0f3460, 0x0f3460);
-  scene.add(gridHelper);
+  addQRCodePlane();
+  addAxisIndicators();
 
   window.addEventListener('resize', () => {
     const w = container.clientWidth;
@@ -54,6 +55,131 @@ function init() {
   });
 
   animate();
+}
+
+function addQRCodePlane() {
+  // Flat plane representing the QR code / table surface at Y=0
+  const planeSize = 2;
+  const geo = new THREE.PlaneGeometry(planeSize, planeSize);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xaaaaaa,
+    roughness: 0.8,
+    metalness: 0,
+    side: THREE.DoubleSide
+  });
+  const plane = geo;
+
+  // Create a checkerboard texture to represent the QR code
+  const texSize = 256;
+  const texCanvas = document.createElement('canvas');
+  texCanvas.width = texSize;
+  texCanvas.height = texSize;
+  const ctx = texCanvas.getContext('2d');
+
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, texSize, texSize);
+
+  // Dark border to represent QR code outline
+  ctx.strokeStyle = '#333333';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(4, 4, texSize - 8, texSize - 8);
+
+  // QR-like pattern
+  const cellSize = texSize / 8;
+  ctx.fillStyle = '#333333';
+  // Corner markers
+  for (const [ox, oy] of [[0, 0], [5, 0], [0, 5]]) {
+    ctx.fillRect(ox * cellSize + 12, oy * cellSize + 12, cellSize * 3 - 4, cellSize * 3 - 4);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(ox * cellSize + 12 + cellSize * 0.6, oy * cellSize + 12 + cellSize * 0.6, cellSize * 1.8, cellSize * 1.8);
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ox * cellSize + 12 + cellSize * 1.0, oy * cellSize + 12 + cellSize * 1.0, cellSize * 1.0, cellSize * 1.0);
+  }
+
+  // "QR CODE" text
+  ctx.fillStyle = '#666666';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('QR CODE', texSize / 2, texSize - 16);
+
+  const texture = new THREE.CanvasTexture(texCanvas);
+
+  const qrMat = new THREE.MeshStandardMaterial({
+    map: texture,
+    roughness: 0.6,
+    metalness: 0,
+    side: THREE.DoubleSide
+  });
+
+  // Plane lies in XZ (horizontal) — Three.js PlaneGeometry faces Y by default
+  const qrPlane = new THREE.Mesh(new THREE.PlaneGeometry(planeSize, planeSize), qrMat);
+  qrPlane.rotation.x = -Math.PI / 2; // lay flat in XZ
+  qrPlane.position.y = 0;
+  qrPlane.name = 'qr-plane';
+  scene.add(qrPlane);
+
+  // Subtle table surface extending beyond QR
+  const tableMat = new THREE.MeshStandardMaterial({
+    color: 0x2a2a3e,
+    roughness: 0.9,
+    metalness: 0
+  });
+  const table = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), tableMat);
+  table.rotation.x = -Math.PI / 2;
+  table.position.y = -0.001;
+  scene.add(table);
+}
+
+function addAxisIndicators() {
+  const len = 1.5;
+  const headLen = 0.1;
+  const headW = 0.05;
+
+  // X axis — red
+  const xArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.01, 0),
+    len, 0xff4444, headLen, headW
+  );
+  scene.add(xArrow);
+
+  // Y axis — green (into the table surface / along QR)
+  const yArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0.01, 0),
+    len, 0x44ff44, headLen, headW
+  );
+  scene.add(yArrow);
+
+  // Z axis — blue (up from table)
+  const zArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0.01, 0),
+    len, 0x4488ff, headLen, headW
+  );
+  scene.add(zArrow);
+
+  // Axis labels using sprites
+  addLabel('X', new THREE.Vector3(len + 0.15, 0.01, 0), 0xff4444);
+  addLabel('Y', new THREE.Vector3(0, 0.01, -(len + 0.15)), 0x44ff44);
+  addLabel('Z', new THREE.Vector3(0, len + 0.15, 0), 0x4488ff);
+}
+
+function addLabel(text, position, color) {
+  const canvas2 = document.createElement('canvas');
+  canvas2.width = 64;
+  canvas2.height = 64;
+  const ctx = canvas2.getContext('2d');
+  ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
+  ctx.font = 'bold 48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 32, 32);
+
+  const texture = new THREE.CanvasTexture(canvas2);
+  const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.copy(position);
+  sprite.scale.set(0.3, 0.3, 0.3);
+  scene.add(sprite);
 }
 
 function animate() {
@@ -113,20 +239,31 @@ async function loadModel(url, ext) {
     return;
   }
 
+  // Normalize to fit in a 2-unit bounding box
   const box = new THREE.Box3().setFromObject(object);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z);
   if (maxDim > 0) {
-    const scale = 2 / maxDim;
-    object.scale.setScalar(scale);
-    object.position.sub(center.multiplyScalar(scale));
+    const s = 2 / maxDim;
+    object.scale.setScalar(s);
   }
+
+  // Recompute bounds after scaling
+  const scaledBox = new THREE.Box3().setFromObject(object);
+  const sc = scaledBox.getCenter(new THREE.Vector3());
+
+  // Place model so it sits on the QR plane (Y=0 in viewer space)
+  // Center horizontally (XZ), bottom touches Y=0
+  object.position.set(-sc.x, -scaledBox.min.y, -sc.z);
 
   scene.add(object);
 
-  camera.position.set(3, 2, 3);
-  controls.target.set(0, 0, 0);
+  // Adjust camera to frame the model
+  const finalBox = new THREE.Box3().setFromObject(object);
+  const modelHeight = finalBox.max.y;
+  camera.position.set(2.5, modelHeight * 0.8 + 1, 2.5);
+  controls.target.set(0, modelHeight * 0.4, 0);
   controls.update();
 }
 
