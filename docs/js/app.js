@@ -1,4 +1,5 @@
 import { saveModel, getAllModels, deleteModel as dbDelete } from './db.js';
+import QRCode from 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/+esm';
 
 const uploadForm = document.getElementById('upload-form');
 const uploadBtn = document.getElementById('upload-btn');
@@ -40,11 +41,10 @@ uploadForm.addEventListener('submit', async (e) => {
     const viewerUrl = `${baseUrl}/viewer.html?id=${id}`;
 
     showStatus('Generating QR code...', '');
-    const qrDataUrl = await QRCode.toDataURL(viewerUrl, {
-      width: 512,
-      margin: 2,
-      color: { dark: '#000000', light: '#ffffff' }
-    });
+    const qr = QRCode(0, 'M');
+    qr.addData(viewerUrl);
+    qr.make();
+    const qrDataUrl = qr.createDataURL(10, 4);
 
     const entry = {
       id,
