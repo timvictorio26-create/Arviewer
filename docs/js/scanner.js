@@ -255,8 +255,8 @@ function loop() {
 
   // Compute tilt from device orientation:
   // beta=90 (upright, looking at wall) → tiltX = 0 (model Y = screen Y)
-  // beta=0  (flat, looking at table)   → tiltX = -π/2 (model Y = toward camera)
-  const targetTiltX = (deviceBeta * Math.PI / 180) - Math.PI / 2;
+  // beta=0  (flat, looking at table)   → tiltX = +π/2 (model Y = toward camera)
+  const targetTiltX = Math.PI / 2 - (deviceBeta * Math.PI / 180);
   smoothTiltX += (targetTiltX - smoothTiltX) * TILT_LERP;
 
   if (loadedObject && smoothInitialized) {
@@ -265,7 +265,7 @@ function loop() {
     smoothScale += (targetScale - smoothScale) * SCALE_LERP;
 
     loadedObject.position.copy(smoothPos);
-    loadedObject.rotation.set(smoothTiltX, Math.PI, smoothRotZ);
+    loadedObject.rotation.set(smoothTiltX, 0, smoothRotZ);
     loadedObject.scale.setScalar(smoothScale);
     loadedObject.visible = true;
   }
