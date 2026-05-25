@@ -19,33 +19,31 @@ let lastDetection = 0;
 let loading = false;
 
 const CAMERA_FOV = 60;
-const HOLD_TIME = 8000;
+const HOLD_TIME = 10000;
 const SCAN_SCALE = 0.6;
 const SCAN_EVERY = 3;
-const POS_LERP = 0.05;
-const ROT_LERP = 0.04;
-const SCALE_LERP = 0.05;
-const ORIENT_LERP = 0.08;
-const JUMP_THRESHOLD = 0.15;
+const ORIENT_LERP = 0.1;
+const MOVE_THRESHOLD = 0.12;
 
-let targetPos = new THREE.Vector3(0, 0, -1);
-let targetRotZ = 0;
-let targetScale = 1;
-const smoothPos = new THREE.Vector3(0, 0, -1);
-let smoothRotZ = 0;
-let smoothScale = 1;
+// Position is LOCKED once detected — only updates on significant QR movement
+const lockedPos = new THREE.Vector3(0, 0, -1);
+let lockedRotZ = 0;
+let lockedScale = 1;
+let positionLocked = false;
 let smoothInitialized = false;
 let frameCount = 0;
 
+const smoothPos = new THREE.Vector3(0, 0, -1);
+let smoothScale = 1;
+const smoothQuat = new THREE.Quaternion();
+
 let deviceAlpha = 0, deviceBeta = 90, deviceGamma = 0;
 let hasDeviceOrientation = false;
-const smoothModelQuat = new THREE.Quaternion();
 
 let scene, camera, renderer;
 
 function initThree() {
   scene = new THREE.Scene();
-
   camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.001, 100);
   camera.position.set(0, 0, 0);
   camera.lookAt(0, 0, -1);
@@ -56,13 +54,10 @@ function initThree() {
   renderer.toneMappingExposure = 1.2;
   renderer.setClearColor(0x000000, 0);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.8);
-  scene.add(ambient);
-
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
   dirLight.position.set(0.5, 1, 0.3);
   scene.add(dirLight);
-
   const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
   fillLight.position.set(-0.5, 0.5, -0.3);
   scene.add(fillLight);
@@ -91,7 +86,7 @@ function initDeviceOrientation() {
 async function startCamera() {
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      statusEl.textContent = 'Camera not supported on this browser. Use Safari.';
+      statusEl.textContent = 'Camera not supported. Use Safari.';
       return;
     }
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -109,63 +104,47 @@ async function startCamera() {
 }
 
 function dist(a, b) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.sqrt(dx * dx + dy * dy);
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
 
-function lerpAngle(a, b, t) {
-  let diff = b - a;
-  while (diff > Math.PI) diff -= 2 * Math.PI;
-  while (diff < -Math.PI) diff += 2 * Math.PI;
-  return a + diff * t;
-}
-
-// Compute a quaternion that keeps the model in "world space" orientation
-// (Y=up, sitting on table) regardless of how the camera is tilted.
-// Uses the device gyroscope to know camera orientation, then applies
-// the inverse so the model stays fixed in the real world.
-function computeModelQuaternion(inPlaneRotZ) {
+// Compute model quaternion from device orientation so model stays
+// fixed in world space (Y=up) as you orbit around it.
+function computeModelQuaternion() {
   if (!hasDeviceOrientation) {
-    return new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, inPlaneRotZ));
+    return new THREE.Quaternion();
   }
 
   const a = THREE.MathUtils.degToRad(deviceAlpha);
   const b = THREE.MathUtils.degToRad(deviceBeta);
   const g = THREE.MathUtils.degToRad(deviceGamma);
 
-  // Device orientation → camera quaternion (W3C spec convention)
-  const deviceQuat = new THREE.Quaternion();
-  const euler = new THREE.Euler(b, a, -g, 'YXZ');
-  deviceQuat.setFromEuler(euler);
+  // Device orientation → quaternion (W3C convention, YXZ order)
+  const q = new THREE.Quaternion();
+  q.setFromEuler(new THREE.Euler(b, a, -g, 'YXZ'));
 
-  // Correct from device frame (Z=up) to camera frame (Y=up, -Z=forward)
-  const worldFix = new THREE.Quaternion().setFromAxisAngle(
+  // Convert from device frame (Z-up, screen facing user)
+  // to Three.js camera frame (Y-up, -Z forward)
+  const worldCorrection = new THREE.Quaternion().setFromAxisAngle(
     new THREE.Vector3(1, 0, 0), -Math.PI / 2
   );
-  deviceQuat.premultiply(worldFix);
+  q.premultiply(worldCorrection);
 
-  // Account for screen orientation (portrait vs landscape)
+  // Screen orientation (portrait/landscape)
   const screenAngle = screen.orientation
     ? screen.orientation.angle
     : (window.orientation || 0);
-  const screenQuat = new THREE.Quaternion().setFromAxisAngle(
-    new THREE.Vector3(0, 0, 1),
-    -THREE.MathUtils.degToRad(screenAngle)
-  );
-  deviceQuat.multiply(screenQuat);
+  q.multiply(new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 0, 1), -THREE.MathUtils.degToRad(screenAngle)
+  ));
+
+  // Rear camera faces opposite to screen
+  q.multiply(new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 1, 0), Math.PI
+  ));
 
   // Model quaternion = inverse of camera rotation
-  // This makes the model appear fixed in world space
-  const modelQuat = deviceQuat.clone().invert();
-
-  // Apply in-plane rotation from QR code edges (around world Y axis)
-  const qrRot = new THREE.Quaternion().setFromAxisAngle(
-    new THREE.Vector3(0, 1, 0), inPlaneRotZ
-  );
-  modelQuat.premultiply(qrRot);
-
-  return modelQuat;
+  // keeps model fixed in world space as camera moves
+  return q.invert();
 }
 
 function estimatePose(loc, scanW, scanH) {
@@ -192,20 +171,13 @@ function estimatePose(loc, scanW, scanH) {
   const qrWorldSize = 0.06;
   const distance = (fy * qrWorldSize) / avgSize;
 
-  const px = ((cx - vw / 2) / fy) * distance;
-  const py = -((cy - vh / 2) / fy) * distance;
-  const pz = -distance;
-
-  const hx = tr.x - tl.x;
-  const hy = tr.y - tl.y;
-  const rotZ = -Math.atan2(hy, hx);
-
-  const modelScale = distance * 0.6;
-
   return {
-    position: new THREE.Vector3(px, py, pz),
-    rotZ,
-    scale: modelScale,
+    position: new THREE.Vector3(
+      ((cx - vw / 2) / fy) * distance,
+      -((cy - vh / 2) / fy) * distance,
+      -distance
+    ),
+    scale: distance * 0.6,
     corners: { tl, tr, bl, br }
   };
 }
@@ -216,18 +188,12 @@ function videoToDisplay(vx, vy, vw, vh) {
   const dh = container.clientHeight;
   const videoAspect = vw / vh;
   const displayAspect = dw / dh;
-
   let scale, offX, offY;
   if (videoAspect > displayAspect) {
-    scale = dh / vh;
-    offX = (vw * scale - dw) / 2;
-    offY = 0;
+    scale = dh / vh; offX = (vw * scale - dw) / 2; offY = 0;
   } else {
-    scale = dw / vw;
-    offX = 0;
-    offY = (vh * scale - dh) / 2;
+    scale = dw / vw; offX = 0; offY = (vh * scale - dh) / 2;
   }
-
   return { x: vx * scale - offX, y: vy * scale - offY };
 }
 
@@ -241,15 +207,10 @@ function scanFrame() {
   scanCanvas.height = sh;
   scanCtx.drawImage(video, 0, 0, sw, sh);
   const imageData = scanCtx.getImageData(0, 0, sw, sh);
-
   const code = jsQR(imageData.data, sw, sh, { inversionAttempts: 'attemptBoth' });
 
   if (code && code.data) {
-    // Support both shared (?file=) and local (?id=) QR codes
-    let modelKey = null;
-    let modelFile = null;
-    let modelName = null;
-
+    let modelKey = null, modelFile = null, modelName = null;
     const urlParams = new URLSearchParams(code.data.split('?')[1] || '');
     if (urlParams.get('file')) {
       modelFile = urlParams.get('file');
@@ -264,40 +225,33 @@ function scanFrame() {
       lastDetection = Date.now();
 
       if (modelKey !== currentModelId && !loading) {
-        if (modelFile) {
-          loadSharedModel(modelFile, modelName, modelKey);
-        } else {
-          loadNewModel(modelKey);
-        }
+        positionLocked = false;
+        if (modelFile) loadSharedModel(modelFile, modelName, modelKey);
+        else loadNewModel(modelKey);
       }
 
       const pose = estimatePose(code.location, sw, sh);
 
-      if (!smoothInitialized) {
-        targetPos.copy(pose.position);
-        targetRotZ = pose.rotZ;
-        targetScale = pose.scale;
+      if (!positionLocked) {
+        // First detection: SNAP to position immediately
+        lockedPos.copy(pose.position);
+        lockedScale = pose.scale;
         smoothPos.copy(pose.position);
-        smoothRotZ = pose.rotZ;
         smoothScale = pose.scale;
+        positionLocked = true;
         smoothInitialized = true;
       } else {
-        const jump = targetPos.distanceTo(pose.position);
-        const maxJump = JUMP_THRESHOLD * Math.abs(targetPos.z);
-        if (jump < maxJump) {
-          targetPos.copy(pose.position);
-          targetRotZ = pose.rotZ;
-          targetScale = pose.scale;
-        } else {
-          targetPos.lerp(pose.position, 0.3);
-          targetRotZ = lerpAngle(targetRotZ, pose.rotZ, 0.3);
-          targetScale += (pose.scale - targetScale) * 0.3;
+        // Only update locked position if QR physically moved significantly
+        const drift = lockedPos.distanceTo(pose.position) / Math.abs(lockedPos.z);
+        if (drift > MOVE_THRESHOLD) {
+          lockedPos.copy(pose.position);
+          lockedScale = pose.scale;
         }
       }
 
+      // Show reticle corners
       const c = pose.corners;
-      const rvw = video.videoWidth;
-      const rvh = video.videoHeight;
+      const rvw = video.videoWidth, rvh = video.videoHeight;
       setCorner('.tl', videoToDisplay(c.tl.x, c.tl.y, rvw, rvh));
       setCorner('.tr', videoToDisplay(c.tr.x, c.tr.y, rvw, rvh));
       setCorner('.bl', videoToDisplay(c.bl.x, c.bl.y, rvw, rvh));
@@ -313,27 +267,26 @@ function loop() {
   if (video.readyState < video.HAVE_ENOUGH_DATA) return;
 
   frameCount++;
-  if (frameCount % SCAN_EVERY === 0) {
-    scanFrame();
-  }
+  if (frameCount % SCAN_EVERY === 0) scanFrame();
 
   if (loadedObject && smoothInitialized) {
-    smoothPos.lerp(targetPos, POS_LERP);
-    smoothRotZ = lerpAngle(smoothRotZ, targetRotZ, ROT_LERP);
-    smoothScale += (targetScale - smoothScale) * SCALE_LERP;
+    // Gently drift toward locked position (handles QR movement)
+    smoothPos.lerp(lockedPos, 0.03);
+    smoothScale += (lockedScale - smoothScale) * 0.03;
+
+    // Orientation from device gyroscope — model stays in world space
+    const targetQuat = computeModelQuaternion();
+    smoothQuat.slerp(targetQuat, ORIENT_LERP);
 
     loadedObject.position.copy(smoothPos);
-
-    const targetQuat = computeModelQuaternion(smoothRotZ);
-    smoothModelQuat.slerp(targetQuat, ORIENT_LERP);
-    loadedObject.quaternion.copy(smoothModelQuat);
-
+    loadedObject.quaternion.copy(smoothQuat);
     loadedObject.scale.setScalar(smoothScale);
     loadedObject.visible = true;
   }
 
   if (Date.now() - lastDetection > HOLD_TIME) {
     if (loadedObject) loadedObject.visible = false;
+    positionLocked = false;
     reticle.style.display = 'none';
     reticle.classList.remove('detected');
   }
@@ -350,84 +303,48 @@ function setCorner(selector, pos) {
 async function loadNewModel(modelId) {
   loading = true;
   statusEl.textContent = 'Loading model...';
-
   try {
     const model = await getModel(modelId);
-    if (!model) {
-      statusEl.textContent = 'Model not found on this device';
-      loading = false;
-      return;
-    }
-
+    if (!model) { statusEl.textContent = 'Model not found on this device'; loading = false; return; }
     if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
     clearLoadedObject();
-
-    const mimeTypes = {
-      glb: 'model/gltf-binary', gltf: 'model/gltf+json',
-      obj: 'text/plain', stl: 'application/octet-stream',
-      fbx: 'application/octet-stream'
-    };
-    const blob = new Blob([model.fileData], {
-      type: mimeTypes[model.fileExt] || 'application/octet-stream'
-    });
+    const mimeTypes = { glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'text/plain', stl: 'application/octet-stream' };
+    const blob = new Blob([model.fileData], { type: mimeTypes[model.fileExt] || 'application/octet-stream' });
     currentBlobUrl = URL.createObjectURL(blob);
-
-    let object;
-    const ext = model.fileExt;
-    if (ext === 'glb' || ext === 'gltf') {
-      object = (await new GLTFLoader().loadAsync(currentBlobUrl)).scene;
-    } else if (ext === 'obj') {
-      object = await new OBJLoader().loadAsync(currentBlobUrl);
-    } else if (ext === 'stl') {
-      const geo = await new STLLoader().loadAsync(currentBlobUrl);
-      object = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-        color: 0x00d4ff, metalness: 0.3, roughness: 0.6
-      }));
-    }
-
+    const object = await loadObject(currentBlobUrl, model.fileExt);
     normalizeAndWrap(object, model.name, modelId);
-  } catch (err) {
-    statusEl.textContent = 'Failed to load model';
-  }
+  } catch (err) { statusEl.textContent = 'Failed to load model'; }
   loading = false;
 }
 
 async function loadSharedModel(fileUrl, name, key) {
   loading = true;
   statusEl.textContent = 'Loading shared model...';
-
   try {
     if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
     clearLoadedObject();
-
     const ext = fileUrl.split('.').pop().toLowerCase();
-    let object;
-    if (ext === 'glb' || ext === 'gltf') {
-      object = (await new GLTFLoader().loadAsync(fileUrl)).scene;
-    } else if (ext === 'obj') {
-      object = await new OBJLoader().loadAsync(fileUrl);
-    } else if (ext === 'stl') {
-      const geo = await new STLLoader().loadAsync(fileUrl);
-      object = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-        color: 0x00d4ff, metalness: 0.3, roughness: 0.6
-      }));
-    }
-
+    const object = await loadObject(fileUrl, ext);
     normalizeAndWrap(object, name, key);
-  } catch (err) {
-    statusEl.textContent = 'Failed to load — model may still be deploying';
-  }
+  } catch (err) { statusEl.textContent = 'Failed to load — may still be deploying'; }
   loading = false;
+}
+
+async function loadObject(url, ext) {
+  if (ext === 'glb' || ext === 'gltf') return (await new GLTFLoader().loadAsync(url)).scene;
+  if (ext === 'obj') return await new OBJLoader().loadAsync(url);
+  if (ext === 'stl') {
+    const geo = await new STLLoader().loadAsync(url);
+    return new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x00d4ff, metalness: 0.3, roughness: 0.6 }));
+  }
+  throw new Error('Unsupported format');
 }
 
 function clearLoadedObject() {
   if (loadedObject) {
-    loadedObject.traverse(child => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) {
-        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-        else child.material.dispose();
-      }
+    loadedObject.traverse(c => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m => m.dispose()); else c.material.dispose(); }
     });
     scene.remove(loadedObject);
     loadedObject = null;
@@ -439,20 +356,18 @@ function normalizeAndWrap(object, name, key) {
   const maxDim = Math.max(...box.getSize(new THREE.Vector3()).toArray());
   if (maxDim > 0) {
     object.scale.setScalar(1 / maxDim);
-    const scaledBox = new THREE.Box3().setFromObject(object);
-    const sc = scaledBox.getCenter(new THREE.Vector3());
-    object.position.set(-sc.x, -scaledBox.min.y, -sc.z);
+    const sb = new THREE.Box3().setFromObject(object);
+    const sc = sb.getCenter(new THREE.Vector3());
+    object.position.set(-sc.x, -sb.min.y, -sc.z);
   }
-
   const wrapper = new THREE.Group();
   wrapper.add(object);
   wrapper.visible = false;
   scene.add(wrapper);
-
   loadedObject = wrapper;
   currentModelId = key;
   smoothInitialized = false;
-
+  positionLocked = false;
   statusEl.textContent = name;
   modelNameEl.textContent = name;
   modelNameEl.classList.remove('hidden');
@@ -462,12 +377,10 @@ function handleResize() {
   const container = video.parentElement;
   const w = container.clientWidth;
   const h = container.clientHeight;
-
   arCanvas.width = w * window.devicePixelRatio;
   arCanvas.height = h * window.devicePixelRatio;
   arCanvas.style.width = w + 'px';
   arCanvas.style.height = h + 'px';
-
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -479,16 +392,8 @@ const startOverlay = document.getElementById('ar-start-overlay');
 const startBtn = document.getElementById('ar-start-btn');
 
 startBtn.addEventListener('click', async () => {
-  // Request device orientation permission (iOS requires user gesture)
   initDeviceOrientation();
-
-  try {
-    initThree();
-  } catch (err) {
-    statusEl.textContent = '3D init error: ' + err.message;
-    return;
-  }
-
+  try { initThree(); } catch (err) { statusEl.textContent = '3D init error: ' + err.message; return; }
   await startCamera();
   startOverlay.classList.add('hidden');
 });
