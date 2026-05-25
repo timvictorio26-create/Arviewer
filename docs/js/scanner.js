@@ -265,7 +265,7 @@ function loop() {
     smoothScale += (targetScale - smoothScale) * SCALE_LERP;
 
     loadedObject.position.copy(smoothPos);
-    loadedObject.rotation.set(smoothTiltX, 0, smoothRotZ);
+    loadedObject.rotation.set(smoothTiltX, Math.PI, smoothRotZ);
     loadedObject.scale.setScalar(smoothScale);
     loadedObject.visible = true;
   }
