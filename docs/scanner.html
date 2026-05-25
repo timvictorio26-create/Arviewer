@@ -5,39 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#00d4ff">
+  <meta name="theme-color" content="#000000">
   <link rel="manifest" href="manifest.json">
-  <title>ARViewer - Scanner</title>
+  <title>ARViewer - AR Scanner</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="scanner-page">
-  <div class="scanner-container">
-    <div class="scanner-header">
-      <a href="index.html" class="back-link">&larr; Back</a>
-      <h1>QR Scanner</h1>
-      <div class="scan-indicator" id="scan-indicator">SCANNING</div>
+<body class="ar-page">
+  <div class="ar-container">
+    <video id="ar-video" playsinline></video>
+    <canvas id="scan-canvas" class="hidden"></canvas>
+    <canvas id="ar-canvas"></canvas>
+
+    <div class="ar-ui">
+      <div class="ar-header">
+        <a href="index.html" class="ar-back">&larr;</a>
+        <span id="ar-status">Scanning for QR codes...</span>
+      </div>
+      <div id="ar-model-name" class="ar-model-name hidden"></div>
     </div>
 
-    <div id="scanner-viewport">
-      <video id="scanner-video" playsinline></video>
-      <canvas id="scanner-canvas" class="hidden"></canvas>
-      <div class="scan-overlay">
-        <div class="scan-frame"></div>
-      </div>
-    </div>
-
-    <div id="model-display" class="hidden">
-      <div id="model-viewer-container">
-        <canvas id="three-canvas"></canvas>
-      </div>
-      <div id="model-info">
-        <span id="model-name-display"></span>
-        <button id="back-to-scan" class="btn btn-small">Scan Another</button>
-      </div>
-    </div>
-
-    <div id="scanner-status" class="scanner-status">
-      Point camera at an ARViewer QR code
+    <div class="ar-reticle" id="ar-reticle">
+      <div class="reticle-corner tl"></div>
+      <div class="reticle-corner tr"></div>
+      <div class="reticle-corner bl"></div>
+      <div class="reticle-corner br"></div>
     </div>
   </div>
 
