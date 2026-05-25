@@ -58,15 +58,20 @@ function initThree() {
 
 async function startCamera() {
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      statusEl.textContent = 'Camera not supported on this browser. Use Safari.';
+      return;
+    }
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
     });
     video.srcObject = stream;
+    video.setAttribute('playsinline', '');
     await video.play();
     handleResize();
     loop();
   } catch (err) {
-    statusEl.textContent = 'Camera access denied. Allow camera and reload.';
+    statusEl.textContent = 'Camera error: ' + (err.name || err.message || err);
   }
 }
 
@@ -311,5 +316,9 @@ function handleResize() {
 
 window.addEventListener('resize', handleResize);
 
-initThree();
+try {
+  initThree();
+} catch (err) {
+  statusEl.textContent = '3D init error: ' + err.message;
+}
 startCamera();
