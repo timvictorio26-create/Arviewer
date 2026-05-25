@@ -25,7 +25,7 @@ const SCAN_EVERY = 3;
 const POS_LERP = 0.05;
 const ROT_LERP = 0.04;
 const SCALE_LERP = 0.05;
-const TILT_LERP = 0.06;
+const ORIENT_LERP = 0.08;
 const JUMP_THRESHOLD = 0.15;
 
 let targetPos = new THREE.Vector3(0, 0, -1);
@@ -34,10 +34,12 @@ let targetScale = 1;
 const smoothPos = new THREE.Vector3(0, 0, -1);
 let smoothRotZ = 0;
 let smoothScale = 1;
-let smoothTiltX = 0;
-let deviceBeta = 90;
 let smoothInitialized = false;
 let frameCount = 0;
+
+let deviceAlpha = 0, deviceBeta = 90, deviceGamma = 0;
+let hasDeviceOrientation = false;
+const smoothModelQuat = new THREE.Quaternion();
 
 let scene, camera, renderer;
 
@@ -66,14 +68,12 @@ function initThree() {
   scene.add(fillLight);
 }
 
-// Use device orientation (gyroscope) to determine camera tilt.
-// beta = 0°: device flat (looking straight down at table)
-// beta = 90°: device upright (looking forward at wall)
 function initDeviceOrientation() {
   const handler = (e) => {
-    if (e.beta !== null) {
-      deviceBeta = Math.max(0, Math.min(90, e.beta));
-    }
+    if (e.alpha !== null) deviceAlpha = e.alpha;
+    if (e.beta !== null) deviceBeta = e.beta;
+    if (e.gamma !== null) deviceGamma = e.gamma;
+    hasDeviceOrientation = true;
   };
 
   if (typeof DeviceOrientationEvent !== 'undefined' &&
@@ -119,6 +119,53 @@ function lerpAngle(a, b, t) {
   while (diff > Math.PI) diff -= 2 * Math.PI;
   while (diff < -Math.PI) diff += 2 * Math.PI;
   return a + diff * t;
+}
+
+// Compute a quaternion that keeps the model in "world space" orientation
+// (Y=up, sitting on table) regardless of how the camera is tilted.
+// Uses the device gyroscope to know camera orientation, then applies
+// the inverse so the model stays fixed in the real world.
+function computeModelQuaternion(inPlaneRotZ) {
+  if (!hasDeviceOrientation) {
+    return new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, inPlaneRotZ));
+  }
+
+  const a = THREE.MathUtils.degToRad(deviceAlpha);
+  const b = THREE.MathUtils.degToRad(deviceBeta);
+  const g = THREE.MathUtils.degToRad(deviceGamma);
+
+  // Device orientation → camera quaternion (W3C spec convention)
+  const deviceQuat = new THREE.Quaternion();
+  const euler = new THREE.Euler(b, a, -g, 'YXZ');
+  deviceQuat.setFromEuler(euler);
+
+  // Correct from device frame (Z=up) to camera frame (Y=up, -Z=forward)
+  const worldFix = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 0, 0), -Math.PI / 2
+  );
+  deviceQuat.premultiply(worldFix);
+
+  // Account for screen orientation (portrait vs landscape)
+  const screenAngle = screen.orientation
+    ? screen.orientation.angle
+    : (window.orientation || 0);
+  const screenQuat = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 0, 1),
+    -THREE.MathUtils.degToRad(screenAngle)
+  );
+  deviceQuat.multiply(screenQuat);
+
+  // Model quaternion = inverse of camera rotation
+  // This makes the model appear fixed in world space
+  const modelQuat = deviceQuat.clone().invert();
+
+  // Apply in-plane rotation from QR code edges (around world Y axis)
+  const qrRot = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 1, 0), inPlaneRotZ
+  );
+  modelQuat.premultiply(qrRot);
+
+  return modelQuat;
 }
 
 function estimatePose(loc, scanW, scanH) {
@@ -270,19 +317,17 @@ function loop() {
     scanFrame();
   }
 
-  // Compute tilt from device orientation:
-  // beta=90 (upright, looking at wall) → tiltX = 0 (model Y = screen Y)
-  // beta=0  (flat, looking at table)   → tiltX = +π/2 (model Y = toward camera)
-  const targetTiltX = Math.PI / 2 - (deviceBeta * Math.PI / 180);
-  smoothTiltX += (targetTiltX - smoothTiltX) * TILT_LERP;
-
   if (loadedObject && smoothInitialized) {
     smoothPos.lerp(targetPos, POS_LERP);
     smoothRotZ = lerpAngle(smoothRotZ, targetRotZ, ROT_LERP);
     smoothScale += (targetScale - smoothScale) * SCALE_LERP;
 
     loadedObject.position.copy(smoothPos);
-    loadedObject.rotation.set(smoothTiltX, 0, smoothRotZ);
+
+    const targetQuat = computeModelQuaternion(smoothRotZ);
+    smoothModelQuat.slerp(targetQuat, ORIENT_LERP);
+    loadedObject.quaternion.copy(smoothModelQuat);
+
     loadedObject.scale.setScalar(smoothScale);
     loadedObject.visible = true;
   }
