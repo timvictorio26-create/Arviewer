@@ -22,12 +22,10 @@ const CAMERA_FOV = 60;
 const HOLD_TIME = 1500;
 const LERP_SPEED = 0.25;
 
-const smoothed = {
-  x: 0, y: 0, z: -1,
-  rotX: 0, rotY: 0, rotZ: 0,
-  scale: 1,
-  initialized: false
-};
+const smoothPos = new THREE.Vector3(0, 0, -1);
+const smoothQuat = new THREE.Quaternion();
+let smoothScale = 1;
+let smoothInitialized = false;
 
 let scene, camera, renderer;
 
@@ -81,10 +79,6 @@ function dist(a, b) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
 function estimatePose(loc, vw, vh) {
   const { topLeftCorner: tl, topRightCorner: tr,
           bottomRightCorner: br, bottomLeftCorner: bl } = loc;
@@ -104,27 +98,55 @@ function estimatePose(loc, vw, vh) {
   const qrWorldSize = 0.06;
   const distance = (fy * qrWorldSize) / avgSize;
 
-  const x = ((cx - vw / 2) / fy) * distance;
-  const y = -((cy - vh / 2) / fy) * distance;
-  const z = -distance;
+  const px = ((cx - vw / 2) / fy) * distance;
+  const py = -((cy - vh / 2) / fy) * distance;
+  const pz = -distance;
 
-  const hx = tr.x - tl.x;
-  const hy = tr.y - tl.y;
-  const rotZ = -Math.atan2(hy, hx);
+  // Project QR corners into 3D camera space to find the QR plane orientation
+  function to3D(p) {
+    return new THREE.Vector3(
+      ((p.x - vw / 2) / fy) * distance,
+      -((p.y - vh / 2) / fy) * distance,
+      pz
+    );
+  }
 
-  const tiltX = Math.atan2(topLen - bottomLen, avgSize) * 1.5;
-  const tiltY = Math.atan2(rightLen - leftLen, avgSize) * 1.5;
+  const tl3 = to3D(tl);
+  const tr3 = to3D(tr);
+  const bl3 = to3D(bl);
+
+  // QR plane coordinate axes:
+  // xAxis: along QR top edge (model X lies flat on QR surface)
+  // yAxis: along QR left edge pointing up (model Y lies flat on QR surface)
+  // zAxis: QR normal = perpendicular to surface (model Z points up from QR)
+  const xAxis = new THREE.Vector3().subVectors(tr3, tl3).normalize();
+  const yEdge = new THREE.Vector3().subVectors(tl3, bl3).normalize();
+  const zAxis = new THREE.Vector3().crossVectors(xAxis, yEdge).normalize();
+
+  // Ensure zAxis points toward the camera (positive Z component in camera space)
+  if (zAxis.z < 0) zAxis.negate();
+
+  // Recompute yAxis to ensure orthogonality
+  const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+
+  // Build rotation: maps model X→xAxis, model Y→yAxis, model Z→zAxis
+  const rotMatrix = new THREE.Matrix4();
+  rotMatrix.makeBasis(xAxis, yAxis, zAxis);
+  const quaternion = new THREE.Quaternion().setFromRotationMatrix(rotMatrix);
 
   const modelScale = distance * 0.6;
 
-  return { x, y, z, rotX: tiltX, rotY: tiltY, rotZ, scale: modelScale };
+  return {
+    position: new THREE.Vector3(px, py, pz),
+    quaternion,
+    scale: modelScale
+  };
 }
 
 function videoToDisplay(vx, vy, vw, vh) {
   const container = video.parentElement;
   const dw = container.clientWidth;
   const dh = container.clientHeight;
-
   const videoAspect = vw / vh;
   const displayAspect = dw / dh;
 
@@ -139,15 +161,11 @@ function videoToDisplay(vx, vy, vw, vh) {
     offY = (vh * scale - dh) / 2;
   }
 
-  return {
-    x: vx * scale - offX,
-    y: vy * scale - offY
-  };
+  return { x: vx * scale - offX, y: vy * scale - offY };
 }
 
 function loop() {
   requestAnimationFrame(loop);
-
   if (video.readyState < video.HAVE_ENOUGH_DATA) return;
 
   const vw = video.videoWidth;
@@ -172,33 +190,28 @@ function loop() {
       if (loadedObject) {
         const pose = estimatePose(code.location, vw, vh);
 
-        if (!smoothed.initialized) {
-          Object.assign(smoothed, pose, { initialized: true });
+        if (!smoothInitialized) {
+          smoothPos.copy(pose.position);
+          smoothQuat.copy(pose.quaternion);
+          smoothScale = pose.scale;
+          smoothInitialized = true;
         } else {
-          smoothed.x = lerp(smoothed.x, pose.x, LERP_SPEED);
-          smoothed.y = lerp(smoothed.y, pose.y, LERP_SPEED);
-          smoothed.z = lerp(smoothed.z, pose.z, LERP_SPEED);
-          smoothed.rotX = lerp(smoothed.rotX, pose.rotX, LERP_SPEED);
-          smoothed.rotY = lerp(smoothed.rotY, pose.rotY, LERP_SPEED);
-          smoothed.rotZ = lerp(smoothed.rotZ, pose.rotZ, LERP_SPEED);
-          smoothed.scale = lerp(smoothed.scale, pose.scale, LERP_SPEED);
+          smoothPos.lerp(pose.position, LERP_SPEED);
+          smoothQuat.slerp(pose.quaternion, LERP_SPEED);
+          smoothScale += (pose.scale - smoothScale) * LERP_SPEED;
         }
 
-        loadedObject.position.set(smoothed.x, smoothed.y, smoothed.z);
-        loadedObject.rotation.set(smoothed.rotX, smoothed.rotY, smoothed.rotZ);
-        loadedObject.scale.setScalar(smoothed.scale);
+        loadedObject.position.copy(smoothPos);
+        loadedObject.quaternion.copy(smoothQuat);
+        loadedObject.scale.setScalar(smoothScale);
         loadedObject.visible = true;
       }
 
       reticle.classList.add('detected');
-
-      const dw = video.parentElement.clientWidth;
-      const dh = video.parentElement.clientHeight;
       const tl = videoToDisplay(code.location.topLeftCorner.x, code.location.topLeftCorner.y, vw, vh);
       const tr = videoToDisplay(code.location.topRightCorner.x, code.location.topRightCorner.y, vw, vh);
       const bl = videoToDisplay(code.location.bottomLeftCorner.x, code.location.bottomLeftCorner.y, vw, vh);
       const br = videoToDisplay(code.location.bottomRightCorner.x, code.location.bottomRightCorner.y, vw, vh);
-
       setCorner('.tl', tl);
       setCorner('.tr', tr);
       setCorner('.bl', bl);
@@ -271,6 +284,7 @@ async function loadNewModel(modelId) {
       }));
     }
 
+    // Normalize model: scale to unit size and center XY on origin
     const box = new THREE.Box3().setFromObject(object);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -278,7 +292,18 @@ async function loadNewModel(modelId) {
     if (maxDim > 0) {
       const s = 1 / maxDim;
       object.scale.setScalar(s);
-      object.position.sub(center.multiplyScalar(s));
+
+      // Recompute bounds after scaling
+      const scaledBox = new THREE.Box3().setFromObject(object);
+      const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+
+      // Center X and Y on origin, but place bottom of model at Z=0
+      // so it sits ON the QR code surface rather than through it
+      object.position.set(
+        -scaledCenter.x,
+        -scaledCenter.y,
+        -scaledBox.min.z
+      );
     }
 
     const wrapper = new THREE.Group();
@@ -288,7 +313,7 @@ async function loadNewModel(modelId) {
 
     loadedObject = wrapper;
     currentModelId = modelId;
-    smoothed.initialized = false;
+    smoothInitialized = false;
 
     statusEl.textContent = model.name;
     modelNameEl.textContent = model.name;
