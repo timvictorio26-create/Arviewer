@@ -2,16 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ARViewer">
+  <meta name="theme-color" content="#00d4ff">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <title>ARViewer - 3D Model QR Manager</title>
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 </head>
 <body>
   <header>
     <h1>ARViewer</h1>
     <p class="subtitle">Upload 3D models, generate QR codes, scan to view</p>
     <nav>
-      <a href="/scanner.html" class="btn btn-primary">Open Scanner</a>
+      <a href="scanner.html" class="btn btn-primary">Open Scanner</a>
     </nav>
   </header>
 
@@ -26,9 +33,9 @@
         <div class="form-group">
           <label for="model-file">3D Model File</label>
           <input type="file" id="model-file" accept=".glb,.gltf,.obj,.fbx,.stl">
-          <small>Supported: GLB, GLTF, OBJ, FBX, STL (max 100MB)</small>
+          <small>Supported: GLB, GLTF, OBJ, FBX, STL</small>
         </div>
-        <button type="submit" class="btn btn-primary">Upload & Generate QR</button>
+        <button type="submit" class="btn btn-primary" id="upload-btn">Upload &amp; Generate QR</button>
       </form>
       <div id="upload-status" class="status hidden"></div>
     </section>
@@ -41,6 +48,11 @@
     </section>
   </main>
 
-  <script src="/js/app.js"></script>
+  <script type="module" src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
 </body>
 </html>

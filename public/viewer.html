@@ -2,21 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#00d4ff">
+  <link rel="manifest" href="manifest.json">
   <title>ARViewer - 3D Model</title>
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="viewer-page">
   <div class="viewer-container">
     <div class="viewer-header">
-      <a href="/" class="back-link">&larr; Back</a>
+      <a href="index.html" class="back-link">&larr; Back</a>
       <h1 id="viewer-title">Loading...</h1>
     </div>
     <div id="viewer-canvas-container">
       <canvas id="viewer-canvas"></canvas>
     </div>
     <div id="viewer-controls">
-      <p>Drag to rotate | Scroll to zoom | Right-click to pan</p>
+      <p>Drag to rotate &middot; Pinch to zoom &middot; Two fingers to pan</p>
     </div>
   </div>
 
@@ -28,6 +32,6 @@
     }
   }
   </script>
-  <script type="module" src="/js/viewer.js"></script>
+  <script type="module" src="js/viewer.js"></script>
 </body>
 </html>

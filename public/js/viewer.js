@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { getModel } from './db.js';
 
 const canvas = document.getElementById('viewer-canvas');
 const titleEl = document.getElementById('viewer-title');
@@ -21,22 +22,23 @@ function init() {
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
-  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1;
 
   controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
+  controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
   scene.add(ambientLight);
 
   const dirLight = new THREE.DirectionalLight(0xffffff, 1);
   dirLight.position.set(5, 10, 7);
   scene.add(dirLight);
 
-  const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+  const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
   dirLight2.position.set(-5, 5, -7);
   scene.add(dirLight2);
 
@@ -67,25 +69,32 @@ async function loadModelData() {
   }
 
   try {
-    const res = await fetch(`/api/models/${modelId}`);
-    if (!res.ok) {
-      titleEl.textContent = 'Model not found';
+    const model = await getModel(modelId);
+    if (!model) {
+      titleEl.textContent = 'Model not found on this device';
       return;
     }
 
-    const model = await res.json();
     titleEl.textContent = model.name;
     document.title = `ARViewer - ${model.name}`;
 
-    await loadModel(model.modelUrl);
+    const mimeTypes = {
+      glb: 'model/gltf-binary',
+      gltf: 'model/gltf+json',
+      obj: 'text/plain',
+      stl: 'application/octet-stream',
+      fbx: 'application/octet-stream'
+    };
+    const blob = new Blob([model.fileData], { type: mimeTypes[model.fileExt] || 'application/octet-stream' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    await loadModel(blobUrl, model.fileExt);
   } catch (err) {
     titleEl.textContent = 'Failed to load model';
   }
 }
 
-async function loadModel(url) {
-  const ext = url.split('.').pop().toLowerCase();
-
+async function loadModel(url, ext) {
   let object;
   if (ext === 'glb' || ext === 'gltf') {
     const loader = new GLTFLoader();
@@ -108,9 +117,11 @@ async function loadModel(url) {
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z);
-  const scale = 2 / maxDim;
-  object.scale.setScalar(scale);
-  object.position.sub(center.multiplyScalar(scale));
+  if (maxDim > 0) {
+    const scale = 2 / maxDim;
+    object.scale.setScalar(scale);
+    object.position.sub(center.multiplyScalar(scale));
+  }
 
   scene.add(object);
 

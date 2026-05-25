@@ -215,6 +215,45 @@ main {
 .scanner-header h1 {
   font-size: 1.25rem;
   color: #00d4ff;
+  flex: 1;
+}
+
+.scan-indicator {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  background: #0f3460;
+  color: #00d4ff;
+  animation: pulse 2s infinite;
+}
+
+.scan-indicator.loading {
+  background: #4a3a00;
+  color: #ffd700;
+  animation: none;
+}
+
+.scan-indicator.active {
+  background: #1a4a2e;
+  color: #2ecc71;
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.btn-small {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.8rem;
+  background: #0f3460;
+  color: #00d4ff;
+  border: 1px solid #00d4ff;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .back-link {
@@ -281,6 +320,8 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 1rem;
+  padding: 0 1rem;
   background: #16213e;
   color: #00d4ff;
   font-weight: 600;

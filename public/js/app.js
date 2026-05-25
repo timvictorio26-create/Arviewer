@@ -1,6 +1,13 @@
+import { saveModel, getAllModels, deleteModel as dbDelete } from './db.js';
+
 const uploadForm = document.getElementById('upload-form');
+const uploadBtn = document.getElementById('upload-btn');
 const uploadStatus = document.getElementById('upload-status');
 const modelsGrid = document.getElementById('models-grid');
+
+function generateId() {
+  return crypto.randomUUID();
+}
 
 uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -13,27 +20,55 @@ uploadForm.addEventListener('submit', async (e) => {
     return;
   }
 
-  const formData = new FormData();
-  formData.append('model', fileInput.files[0]);
-  formData.append('name', nameInput.value || fileInput.files[0].name);
+  const file = fileInput.files[0];
+  const ext = file.name.split('.').pop().toLowerCase();
+  const allowed = ['glb', 'gltf', 'obj', 'fbx', 'stl'];
+  if (!allowed.includes(ext)) {
+    showStatus(`File type .${ext} not supported. Use: ${allowed.map(e => '.' + e).join(', ')}`, 'error');
+    return;
+  }
 
-  showStatus('Uploading...', '');
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = 'Processing...';
+  showStatus('Reading file...', '');
 
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    const data = await res.json();
+    const arrayBuffer = await file.arrayBuffer();
+    const id = generateId();
 
-    if (!res.ok) {
-      showStatus(data.error || 'Upload failed', 'error');
-      return;
-    }
+    const baseUrl = window.location.href.replace(/\/[^/]*$/, '');
+    const viewerUrl = `${baseUrl}/viewer.html?id=${id}`;
 
-    showStatus('Model uploaded! QR code generated.', 'success');
+    showStatus('Generating QR code...', '');
+    const qrDataUrl = await QRCode.toDataURL(viewerUrl, {
+      width: 512,
+      margin: 2,
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+
+    const entry = {
+      id,
+      name: nameInput.value || file.name,
+      originalName: file.name,
+      fileExt: ext,
+      fileData: arrayBuffer,
+      viewerUrl,
+      qrCode: qrDataUrl,
+      createdAt: new Date().toISOString()
+    };
+
+    showStatus('Saving to device...', '');
+    await saveModel(entry);
+
+    showStatus('Model saved! QR code generated.', 'success');
     fileInput.value = '';
     nameInput.value = '';
     loadModels();
   } catch (err) {
-    showStatus('Upload failed: ' + err.message, 'error');
+    showStatus('Failed: ' + err.message, 'error');
+  } finally {
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload & Generate QR';
   }
 });
 
@@ -45,46 +80,47 @@ function showStatus(msg, type) {
 
 async function loadModels() {
   try {
-    const res = await fetch('/api/models');
-    const models = await res.json();
+    const models = await getAllModels();
 
     if (models.length === 0) {
       modelsGrid.innerHTML = '<p class="empty-state">No models uploaded yet.</p>';
       return;
     }
 
-    modelsGrid.innerHTML = models.map(model => `
-      <div class="model-card">
-        <h3>${escapeHtml(model.name)}</h3>
-        <div class="meta">
-          Uploaded: ${new Date(model.createdAt).toLocaleDateString()}<br>
-          ID: ${model.id.slice(0, 8)}...
+    modelsGrid.innerHTML = models.map(model => {
+      const sizeKB = model.fileData ? (model.fileData.byteLength / 1024).toFixed(0) : '?';
+      const sizeLabel = sizeKB > 1024 ? (sizeKB / 1024).toFixed(1) + ' MB' : sizeKB + ' KB';
+      return `
+        <div class="model-card">
+          <h3>${escapeHtml(model.name)}</h3>
+          <div class="meta">
+            ${new Date(model.createdAt).toLocaleDateString()} &middot; ${sizeLabel} &middot; .${model.fileExt}
+          </div>
+          <div class="qr-code">
+            <img src="${model.qrCode}" alt="QR Code for ${escapeHtml(model.name)}">
+          </div>
+          <div class="actions">
+            <a href="viewer.html?id=${model.id}" class="btn btn-primary">View 3D</a>
+            <a href="${model.qrCode}" download="qr-${escapeHtml(model.name)}.png" class="btn btn-primary">Save QR</a>
+            <button onclick="window._deleteModel('${model.id}')" class="btn btn-danger">Delete</button>
+          </div>
         </div>
-        <div class="qr-code">
-          <img src="${model.qrCode}" alt="QR Code for ${escapeHtml(model.name)}">
-        </div>
-        <div class="actions">
-          <a href="${model.viewerUrl}" class="btn btn-primary">View 3D</a>
-          <a href="${model.qrCode}" download="qr-${model.id}.png" class="btn btn-primary">Download QR</a>
-          <button onclick="deleteModel('${model.id}')" class="btn btn-danger">Delete</button>
-        </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   } catch (err) {
     modelsGrid.innerHTML = '<p class="empty-state">Failed to load models.</p>';
   }
 }
 
-async function deleteModel(id) {
+window._deleteModel = async function(id) {
   if (!confirm('Delete this model and its QR code?')) return;
-
   try {
-    await fetch(`/api/models/${id}`, { method: 'DELETE' });
+    await dbDelete(id);
     loadModels();
   } catch (err) {
     alert('Failed to delete model');
   }
-}
+};
 
 function escapeHtml(str) {
   const div = document.createElement('div');
