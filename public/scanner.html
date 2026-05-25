@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARViewer - Scanner</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="scanner-page">
+  <div class="scanner-container">
+    <div class="scanner-header">
+      <a href="/" class="back-link">&larr; Back</a>
+      <h1>QR Scanner</h1>
+    </div>
+
+    <div id="scanner-viewport">
+      <video id="scanner-video" playsinline></video>
+      <canvas id="scanner-canvas" class="hidden"></canvas>
+      <div class="scan-overlay">
+        <div class="scan-frame"></div>
+      </div>
+    </div>
+
+    <div id="model-display" class="hidden">
+      <div id="model-viewer-container">
+        <canvas id="three-canvas"></canvas>
+      </div>
+      <div id="model-info">
+        <span id="model-name-display"></span>
+      </div>
+    </div>
+
+    <div id="scanner-status" class="scanner-status">
+      Point camera at an ARViewer QR code
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script type="module" src="/js/scanner.js"></script>
+</body>
+</html>

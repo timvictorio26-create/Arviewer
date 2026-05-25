@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARViewer - 3D Model QR Manager</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header>
+    <h1>ARViewer</h1>
+    <p class="subtitle">Upload 3D models, generate QR codes, scan to view</p>
+    <nav>
+      <a href="/scanner.html" class="btn btn-primary">Open Scanner</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="upload-section">
+      <h2>Upload 3D Model</h2>
+      <form id="upload-form">
+        <div class="form-group">
+          <label for="model-name">Model Name</label>
+          <input type="text" id="model-name" placeholder="e.g. Building Floor Plan 3D">
+        </div>
+        <div class="form-group">
+          <label for="model-file">3D Model File</label>
+          <input type="file" id="model-file" accept=".glb,.gltf,.obj,.fbx,.stl">
+          <small>Supported: GLB, GLTF, OBJ, FBX, STL (max 100MB)</small>
+        </div>
+        <button type="submit" class="btn btn-primary">Upload & Generate QR</button>
+      </form>
+      <div id="upload-status" class="status hidden"></div>
+    </section>
+
+    <section class="models-section">
+      <h2>Model Library</h2>
+      <div id="models-grid" class="models-grid">
+        <p class="empty-state">No models uploaded yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
