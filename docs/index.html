@@ -15,13 +15,35 @@
 <body>
   <header>
     <h1>ARViewer</h1>
-    <p class="subtitle">Upload 3D models, generate QR codes, scan to view</p>
+    <p class="subtitle">Upload 3D models, generate shareable QR codes</p>
     <nav>
       <a href="scanner.html" class="btn btn-primary">Open Scanner</a>
     </nav>
   </header>
 
   <main>
+    <section id="setup-section" class="setup-section hidden">
+      <h2>Connect GitHub</h2>
+      <p>To publish models so anyone can scan your QR codes, connect your GitHub account with a Personal Access Token.</p>
+      <ol class="setup-steps">
+        <li>Go to <strong>GitHub.com &rarr; Settings &rarr; Developer settings &rarr; Personal access tokens &rarr; Fine-grained tokens</strong></li>
+        <li>Click <strong>Generate new token</strong></li>
+        <li>Set repository access to <strong>Only select repositories</strong> and pick <strong>Arviewer</strong></li>
+        <li>Under Permissions &rarr; Repository permissions, set <strong>Contents</strong> to <strong>Read and write</strong></li>
+        <li>Generate and paste the token below</li>
+      </ol>
+      <div class="form-group">
+        <input type="password" id="github-token" placeholder="github_pat_...">
+      </div>
+      <button id="save-token-btn" class="btn btn-primary">Connect</button>
+      <div id="token-status" class="status hidden"></div>
+    </section>
+
+    <section id="connected-badge" class="connected-badge hidden">
+      <span>GitHub connected</span>
+      <button id="disconnect-btn" class="btn-link">Disconnect</button>
+    </section>
+
     <section class="upload-section">
       <h2>Upload 3D Model</h2>
       <form id="upload-form">

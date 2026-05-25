@@ -198,13 +198,30 @@ function scanFrame() {
   const code = jsQR(imageData.data, sw, sh, { inversionAttempts: 'attemptBoth' });
 
   if (code && code.data) {
-    const match = code.data.match(/[?&]id=([a-f0-9-]+)/i);
-    if (match) {
-      const modelId = match[1];
+    // Support both shared (?file=) and local (?id=) QR codes
+    let modelKey = null;
+    let modelFile = null;
+    let modelName = null;
+
+    const urlParams = new URLSearchParams(code.data.split('?')[1] || '');
+    if (urlParams.get('file')) {
+      modelFile = urlParams.get('file');
+      modelName = urlParams.get('name') || 'Model';
+      modelKey = modelFile;
+    } else {
+      const idMatch = code.data.match(/[?&]id=([a-f0-9-]+)/i);
+      if (idMatch) modelKey = idMatch[1];
+    }
+
+    if (modelKey) {
       lastDetection = Date.now();
 
-      if (modelId !== currentModelId && !loading) {
-        loadNewModel(modelId);
+      if (modelKey !== currentModelId && !loading) {
+        if (modelFile) {
+          loadSharedModel(modelFile, modelName, modelKey);
+        } else {
+          loadNewModel(modelKey);
+        }
       }
 
       const pose = estimatePose(code.location, sw, sh);
@@ -298,18 +315,7 @@ async function loadNewModel(modelId) {
     }
 
     if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
-
-    if (loadedObject) {
-      loadedObject.traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) {
-          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-          else child.material.dispose();
-        }
-      });
-      scene.remove(loadedObject);
-      loadedObject = null;
-    }
+    clearLoadedObject();
 
     const mimeTypes = {
       glb: 'model/gltf-binary', gltf: 'model/gltf+json',
@@ -334,35 +340,77 @@ async function loadNewModel(modelId) {
       }));
     }
 
-    const box = new THREE.Box3().setFromObject(object);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim > 0) {
-      const s = 1 / maxDim;
-      object.scale.setScalar(s);
-
-      const scaledBox = new THREE.Box3().setFromObject(object);
-      const sc = scaledBox.getCenter(new THREE.Vector3());
-      object.position.set(-sc.x, -scaledBox.min.y, -sc.z);
-    }
-
-    const wrapper = new THREE.Group();
-    wrapper.add(object);
-    wrapper.visible = false;
-    scene.add(wrapper);
-
-    loadedObject = wrapper;
-    currentModelId = modelId;
-    smoothInitialized = false;
-
-    statusEl.textContent = model.name;
-    modelNameEl.textContent = model.name;
-    modelNameEl.classList.remove('hidden');
+    normalizeAndWrap(object, model.name, modelId);
   } catch (err) {
     statusEl.textContent = 'Failed to load model';
   }
   loading = false;
+}
+
+async function loadSharedModel(fileUrl, name, key) {
+  loading = true;
+  statusEl.textContent = 'Loading shared model...';
+
+  try {
+    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+    clearLoadedObject();
+
+    const ext = fileUrl.split('.').pop().toLowerCase();
+    let object;
+    if (ext === 'glb' || ext === 'gltf') {
+      object = (await new GLTFLoader().loadAsync(fileUrl)).scene;
+    } else if (ext === 'obj') {
+      object = await new OBJLoader().loadAsync(fileUrl);
+    } else if (ext === 'stl') {
+      const geo = await new STLLoader().loadAsync(fileUrl);
+      object = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: 0x00d4ff, metalness: 0.3, roughness: 0.6
+      }));
+    }
+
+    normalizeAndWrap(object, name, key);
+  } catch (err) {
+    statusEl.textContent = 'Failed to load — model may still be deploying';
+  }
+  loading = false;
+}
+
+function clearLoadedObject() {
+  if (loadedObject) {
+    loadedObject.traverse(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+        else child.material.dispose();
+      }
+    });
+    scene.remove(loadedObject);
+    loadedObject = null;
+  }
+}
+
+function normalizeAndWrap(object, name, key) {
+  const box = new THREE.Box3().setFromObject(object);
+  const maxDim = Math.max(...box.getSize(new THREE.Vector3()).toArray());
+  if (maxDim > 0) {
+    object.scale.setScalar(1 / maxDim);
+    const scaledBox = new THREE.Box3().setFromObject(object);
+    const sc = scaledBox.getCenter(new THREE.Vector3());
+    object.position.set(-sc.x, -scaledBox.min.y, -sc.z);
+  }
+
+  const wrapper = new THREE.Group();
+  wrapper.add(object);
+  wrapper.visible = false;
+  scene.add(wrapper);
+
+  loadedObject = wrapper;
+  currentModelId = key;
+  smoothInitialized = false;
+
+  statusEl.textContent = name;
+  modelNameEl.textContent = name;
+  modelNameEl.classList.remove('hidden');
 }
 
 function handleResize() {

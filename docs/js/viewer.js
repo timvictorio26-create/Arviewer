@@ -9,6 +9,8 @@ const canvas = document.getElementById('viewer-canvas');
 const titleEl = document.getElementById('viewer-title');
 const params = new URLSearchParams(window.location.search);
 const modelId = params.get('id');
+const modelFile = params.get('file');
+const modelName = params.get('name');
 
 let scene, camera, renderer, controls;
 
@@ -58,37 +60,21 @@ function init() {
 }
 
 function addQRCodePlane() {
-  // Flat plane representing the QR code / table surface at Y=0
-  const planeSize = 2;
-  const geo = new THREE.PlaneGeometry(planeSize, planeSize);
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xaaaaaa,
-    roughness: 0.8,
-    metalness: 0,
-    side: THREE.DoubleSide
-  });
-  const plane = geo;
-
-  // Create a checkerboard texture to represent the QR code
   const texSize = 256;
   const texCanvas = document.createElement('canvas');
   texCanvas.width = texSize;
   texCanvas.height = texSize;
   const ctx = texCanvas.getContext('2d');
 
-  // White background
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, texSize, texSize);
 
-  // Dark border to represent QR code outline
   ctx.strokeStyle = '#333333';
   ctx.lineWidth = 8;
   ctx.strokeRect(4, 4, texSize - 8, texSize - 8);
 
-  // QR-like pattern
   const cellSize = texSize / 8;
   ctx.fillStyle = '#333333';
-  // Corner markers
   for (const [ox, oy] of [[0, 0], [5, 0], [0, 5]]) {
     ctx.fillRect(ox * cellSize + 12, oy * cellSize + 12, cellSize * 3 - 4, cellSize * 3 - 4);
     ctx.fillStyle = '#ffffff';
@@ -97,34 +83,19 @@ function addQRCodePlane() {
     ctx.fillRect(ox * cellSize + 12 + cellSize * 1.0, oy * cellSize + 12 + cellSize * 1.0, cellSize * 1.0, cellSize * 1.0);
   }
 
-  // "QR CODE" text
   ctx.fillStyle = '#666666';
   ctx.font = 'bold 18px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('QR CODE', texSize / 2, texSize - 16);
 
   const texture = new THREE.CanvasTexture(texCanvas);
-
-  const qrMat = new THREE.MeshStandardMaterial({
-    map: texture,
-    roughness: 0.6,
-    metalness: 0,
-    side: THREE.DoubleSide
-  });
-
-  // Plane lies in XZ (horizontal) — Three.js PlaneGeometry faces Y by default
-  const qrPlane = new THREE.Mesh(new THREE.PlaneGeometry(planeSize, planeSize), qrMat);
-  qrPlane.rotation.x = -Math.PI / 2; // lay flat in XZ
+  const qrMat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.6, metalness: 0, side: THREE.DoubleSide });
+  const qrPlane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), qrMat);
+  qrPlane.rotation.x = -Math.PI / 2;
   qrPlane.position.y = 0;
-  qrPlane.name = 'qr-plane';
   scene.add(qrPlane);
 
-  // Subtle table surface extending beyond QR
-  const tableMat = new THREE.MeshStandardMaterial({
-    color: 0x2a2a3e,
-    roughness: 0.9,
-    metalness: 0
-  });
+  const tableMat = new THREE.MeshStandardMaterial({ color: 0x2a2a3e, roughness: 0.9, metalness: 0 });
   const table = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), tableMat);
   table.rotation.x = -Math.PI / 2;
   table.position.y = -0.001;
@@ -133,50 +104,24 @@ function addQRCodePlane() {
 
 function addAxisIndicators() {
   const len = 1.5;
-  const headLen = 0.1;
-  const headW = 0.05;
-
-  // X axis — red
-  const xArrow = new THREE.ArrowHelper(
-    new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.01, 0),
-    len, 0xff4444, headLen, headW
-  );
-  scene.add(xArrow);
-
-  // Y axis — green (into the table surface / along QR)
-  const yArrow = new THREE.ArrowHelper(
-    new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0.01, 0),
-    len, 0x44ff44, headLen, headW
-  );
-  scene.add(yArrow);
-
-  // Z axis — blue (up from table)
-  const zArrow = new THREE.ArrowHelper(
-    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0.01, 0),
-    len, 0x4488ff, headLen, headW
-  );
-  scene.add(zArrow);
-
-  // Axis labels using sprites
+  scene.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.01, 0), len, 0xff4444, 0.1, 0.05));
+  scene.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0.01, 0), len, 0x44ff44, 0.1, 0.05));
+  scene.add(new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0.01, 0), len, 0x4488ff, 0.1, 0.05));
   addLabel('X', new THREE.Vector3(len + 0.15, 0.01, 0), 0xff4444);
   addLabel('Y', new THREE.Vector3(0, 0.01, -(len + 0.15)), 0x44ff44);
   addLabel('Z', new THREE.Vector3(0, len + 0.15, 0), 0x4488ff);
 }
 
 function addLabel(text, position, color) {
-  const canvas2 = document.createElement('canvas');
-  canvas2.width = 64;
-  canvas2.height = 64;
-  const ctx = canvas2.getContext('2d');
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
   ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
   ctx.font = 'bold 48px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 32, 32);
-
-  const texture = new THREE.CanvasTexture(canvas2);
-  const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
-  const sprite = new THREE.Sprite(mat);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
   sprite.position.copy(position);
   sprite.scale.set(0.3, 0.3, 0.3);
   scene.add(sprite);
@@ -189,57 +134,56 @@ function animate() {
 }
 
 async function loadModelData() {
-  if (!modelId) {
-    titleEl.textContent = 'No model specified';
+  if (modelFile) {
+    // Shared model — load from URL
+    titleEl.textContent = modelName || 'Loading...';
+    document.title = `ARViewer - ${modelName || 'Model'}`;
+    const ext = modelFile.split('.').pop().toLowerCase();
+    try {
+      await loadModelFromUrl(modelFile, ext);
+    } catch (err) {
+      titleEl.textContent = 'Failed to load model. It may still be deploying — try again in a minute.';
+    }
     return;
   }
 
-  try {
-    const model = await getModel(modelId);
-    if (!model) {
-      titleEl.textContent = 'Model not found on this device';
-      return;
+  if (modelId) {
+    // Local model — load from IndexedDB
+    try {
+      const model = await getModel(modelId);
+      if (!model) {
+        titleEl.textContent = 'Model not found on this device';
+        return;
+      }
+      titleEl.textContent = model.name;
+      document.title = `ARViewer - ${model.name}`;
+      const mimeTypes = { glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'text/plain', stl: 'application/octet-stream' };
+      const blob = new Blob([model.fileData], { type: mimeTypes[model.fileExt] || 'application/octet-stream' });
+      const blobUrl = URL.createObjectURL(blob);
+      await loadModelFromUrl(blobUrl, model.fileExt);
+    } catch (err) {
+      titleEl.textContent = 'Failed to load model';
     }
-
-    titleEl.textContent = model.name;
-    document.title = `ARViewer - ${model.name}`;
-
-    const mimeTypes = {
-      glb: 'model/gltf-binary',
-      gltf: 'model/gltf+json',
-      obj: 'text/plain',
-      stl: 'application/octet-stream',
-      fbx: 'application/octet-stream'
-    };
-    const blob = new Blob([model.fileData], { type: mimeTypes[model.fileExt] || 'application/octet-stream' });
-    const blobUrl = URL.createObjectURL(blob);
-
-    await loadModel(blobUrl, model.fileExt);
-  } catch (err) {
-    titleEl.textContent = 'Failed to load model';
+    return;
   }
+
+  titleEl.textContent = 'No model specified';
 }
 
-async function loadModel(url, ext) {
+async function loadModelFromUrl(url, ext) {
   let object;
   if (ext === 'glb' || ext === 'gltf') {
-    const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(url);
-    object = gltf.scene;
+    object = (await new GLTFLoader().loadAsync(url)).scene;
   } else if (ext === 'obj') {
-    const loader = new OBJLoader();
-    object = await loader.loadAsync(url);
+    object = await new OBJLoader().loadAsync(url);
   } else if (ext === 'stl') {
-    const loader = new STLLoader();
-    const geometry = await loader.loadAsync(url);
-    const material = new THREE.MeshStandardMaterial({ color: 0x00d4ff, metalness: 0.3, roughness: 0.6 });
-    object = new THREE.Mesh(geometry, material);
+    const geometry = await new STLLoader().loadAsync(url);
+    object = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x00d4ff, metalness: 0.3, roughness: 0.6 }));
   } else {
     titleEl.textContent = 'Unsupported format';
     return;
   }
 
-  // Normalize to fit in a 2-unit bounding box
   const box = new THREE.Box3().setFromObject(object);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -248,20 +192,12 @@ async function loadModel(url, ext) {
     const s = 2 / maxDim;
     object.scale.setScalar(s);
   }
-
-  // Recompute bounds after scaling
   const scaledBox = new THREE.Box3().setFromObject(object);
   const sc = scaledBox.getCenter(new THREE.Vector3());
-
-  // Place model so it sits on the QR plane (Y=0 in viewer space)
-  // Center horizontally (XZ), bottom touches Y=0
   object.position.set(-sc.x, -scaledBox.min.y, -sc.z);
-
   scene.add(object);
 
-  // Adjust camera to frame the model
-  const finalBox = new THREE.Box3().setFromObject(object);
-  const modelHeight = finalBox.max.y;
+  const modelHeight = new THREE.Box3().setFromObject(object).max.y;
   camera.position.set(2.5, modelHeight * 0.8 + 1, 2.5);
   controls.target.set(0, modelHeight * 0.4, 0);
   controls.update();
