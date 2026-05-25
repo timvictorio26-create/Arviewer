@@ -19,11 +19,13 @@ let lastDetection = 0;
 let loading = false;
 
 const CAMERA_FOV = 60;
-const HOLD_TIME = 1500;
-const LERP_SPEED = 0.25;
+const HOLD_TIME = 8000;
+const POS_LERP = 0.12;
+const ROT_LERP = 0.1;
+const SCALE_LERP = 0.1;
 
 const smoothPos = new THREE.Vector3(0, 0, -1);
-const smoothQuat = new THREE.Quaternion();
+let smoothRotZ = 0;
 let smoothScale = 1;
 let smoothInitialized = false;
 
@@ -79,6 +81,13 @@ function dist(a, b) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function lerpAngle(a, b, t) {
+  let diff = b - a;
+  while (diff > Math.PI) diff -= 2 * Math.PI;
+  while (diff < -Math.PI) diff += 2 * Math.PI;
+  return a + diff * t;
+}
+
 function estimatePose(loc, vw, vh) {
   const { topLeftCorner: tl, topRightCorner: tr,
           bottomRightCorner: br, bottomLeftCorner: bl } = loc;
@@ -94,7 +103,6 @@ function estimatePose(loc, vw, vh) {
 
   const fovRad = (CAMERA_FOV * Math.PI) / 180;
   const fy = vh / (2 * Math.tan(fovRad / 2));
-
   const qrWorldSize = 0.06;
   const distance = (fy * qrWorldSize) / avgSize;
 
@@ -102,43 +110,16 @@ function estimatePose(loc, vw, vh) {
   const py = -((cy - vh / 2) / fy) * distance;
   const pz = -distance;
 
-  // Project QR corners into 3D camera space to find the QR plane orientation
-  function to3D(p) {
-    return new THREE.Vector3(
-      ((p.x - vw / 2) / fy) * distance,
-      -((p.y - vh / 2) / fy) * distance,
-      pz
-    );
-  }
-
-  const tl3 = to3D(tl);
-  const tr3 = to3D(tr);
-  const bl3 = to3D(bl);
-
-  // QR plane coordinate axes:
-  // xAxis: along QR top edge (model X lies flat on QR surface)
-  // yAxis: along QR left edge pointing up (model Y lies flat on QR surface)
-  // zAxis: QR normal = perpendicular to surface (model Z points up from QR)
-  const xAxis = new THREE.Vector3().subVectors(tr3, tl3).normalize();
-  const yEdge = new THREE.Vector3().subVectors(tl3, bl3).normalize();
-  const zAxis = new THREE.Vector3().crossVectors(xAxis, yEdge).normalize();
-
-  // Ensure zAxis points toward the camera (positive Z component in camera space)
-  if (zAxis.z < 0) zAxis.negate();
-
-  // Recompute yAxis to ensure orthogonality
-  const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
-
-  // Build rotation: maps model X→xAxis, model Y→yAxis, model Z→zAxis
-  const rotMatrix = new THREE.Matrix4();
-  rotMatrix.makeBasis(xAxis, yAxis, zAxis);
-  const quaternion = new THREE.Quaternion().setFromRotationMatrix(rotMatrix);
+  // Stable in-plane rotation from QR top edge
+  const hx = tr.x - tl.x;
+  const hy = tr.y - tl.y;
+  const rotZ = -Math.atan2(hy, hx);
 
   const modelScale = distance * 0.6;
 
   return {
     position: new THREE.Vector3(px, py, pz),
-    quaternion,
+    rotZ,
     scale: modelScale
   };
 }
@@ -192,17 +173,19 @@ function loop() {
 
         if (!smoothInitialized) {
           smoothPos.copy(pose.position);
-          smoothQuat.copy(pose.quaternion);
+          smoothRotZ = pose.rotZ;
           smoothScale = pose.scale;
           smoothInitialized = true;
         } else {
-          smoothPos.lerp(pose.position, LERP_SPEED);
-          smoothQuat.slerp(pose.quaternion, LERP_SPEED);
-          smoothScale += (pose.scale - smoothScale) * LERP_SPEED;
+          smoothPos.lerp(pose.position, POS_LERP);
+          smoothRotZ = lerpAngle(smoothRotZ, pose.rotZ, ROT_LERP);
+          smoothScale += (pose.scale - smoothScale) * SCALE_LERP;
         }
 
         loadedObject.position.copy(smoothPos);
-        loadedObject.quaternion.copy(smoothQuat);
+        // Z-up model: XY flat on QR surface, Z toward camera
+        // Only rotate around Z (the normal axis) for in-plane alignment
+        loadedObject.rotation.set(0, 0, smoothRotZ);
         loadedObject.scale.setScalar(smoothScale);
         loadedObject.visible = true;
       }
@@ -219,8 +202,8 @@ function loop() {
       reticle.style.display = 'block';
     }
   } else {
-    if (Date.now() - lastDetection > HOLD_TIME && loadedObject) {
-      loadedObject.visible = false;
+    if (Date.now() - lastDetection > HOLD_TIME) {
+      if (loadedObject) loadedObject.visible = false;
       reticle.style.display = 'none';
       reticle.classList.remove('detected');
     }
@@ -284,7 +267,7 @@ async function loadNewModel(modelId) {
       }));
     }
 
-    // Normalize model: scale to unit size and center XY on origin
+    // Normalize: scale to unit size
     const box = new THREE.Box3().setFromObject(object);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -293,17 +276,11 @@ async function loadNewModel(modelId) {
       const s = 1 / maxDim;
       object.scale.setScalar(s);
 
-      // Recompute bounds after scaling
       const scaledBox = new THREE.Box3().setFromObject(object);
-      const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+      const sc = scaledBox.getCenter(new THREE.Vector3());
 
-      // Center X and Y on origin, but place bottom of model at Z=0
-      // so it sits ON the QR code surface rather than through it
-      object.position.set(
-        -scaledCenter.x,
-        -scaledCenter.y,
-        -scaledBox.min.z
-      );
+      // Center XY on origin, place bottom at Z=0 so it sits on the QR surface
+      object.position.set(-sc.x, -sc.y, -scaledBox.min.z);
     }
 
     const wrapper = new THREE.Group();
