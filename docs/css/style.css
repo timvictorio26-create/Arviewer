@@ -233,6 +233,42 @@ main {
   pointer-events: none;
 }
 
+.ar-start-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: rgba(10, 10, 20, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.ar-start-content h2 {
+  font-size: 1.5rem;
+  color: #00d4ff;
+  margin-bottom: 0.75rem;
+}
+
+.ar-start-content p {
+  color: #aaa;
+  margin-bottom: 1.25rem;
+  padding: 0 1rem;
+}
+
+.ar-start-note {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.btn-large {
+  font-size: 1.1rem;
+  padding: 1rem 2rem;
+}
+
 .ar-header {
   display: flex;
   align-items: center;

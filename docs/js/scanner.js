@@ -20,11 +20,12 @@ let loading = false;
 
 const CAMERA_FOV = 60;
 const HOLD_TIME = 8000;
-const SCAN_SCALE = 0.5;
+const SCAN_SCALE = 0.6;
 const SCAN_EVERY = 3;
 const POS_LERP = 0.05;
 const ROT_LERP = 0.04;
 const SCALE_LERP = 0.05;
+const TILT_LERP = 0.06;
 const JUMP_THRESHOLD = 0.15;
 
 let targetPos = new THREE.Vector3(0, 0, -1);
@@ -33,6 +34,8 @@ let targetScale = 1;
 const smoothPos = new THREE.Vector3(0, 0, -1);
 let smoothRotZ = 0;
 let smoothScale = 1;
+let smoothTiltX = 0;
+let deviceBeta = 90;
 let smoothInitialized = false;
 let frameCount = 0;
 
@@ -63,6 +66,28 @@ function initThree() {
   scene.add(fillLight);
 }
 
+// Use device orientation (gyroscope) to determine camera tilt.
+// beta = 0°: device flat (looking straight down at table)
+// beta = 90°: device upright (looking forward at wall)
+function initDeviceOrientation() {
+  const handler = (e) => {
+    if (e.beta !== null) {
+      deviceBeta = Math.max(0, Math.min(90, e.beta));
+    }
+  };
+
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then(response => {
+      if (response === 'granted') {
+        window.addEventListener('deviceorientation', handler);
+      }
+    }).catch(() => {});
+  } else {
+    window.addEventListener('deviceorientation', handler);
+  }
+}
+
 async function startCamera() {
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -76,6 +101,7 @@ async function startCamera() {
     video.setAttribute('playsinline', '');
     await video.play();
     handleResize();
+    initDeviceOrientation();
     loop();
   } catch (err) {
     statusEl.textContent = 'Camera error: ' + (err.name || err.message || err);
@@ -169,7 +195,7 @@ function scanFrame() {
   scanCtx.drawImage(video, 0, 0, sw, sh);
   const imageData = scanCtx.getImageData(0, 0, sw, sh);
 
-  const code = jsQR(imageData.data, sw, sh, { inversionAttempts: 'dontInvert' });
+  const code = jsQR(imageData.data, sw, sh, { inversionAttempts: 'attemptBoth' });
 
   if (code && code.data) {
     const match = code.data.match(/[?&]id=([a-f0-9-]+)/i);
@@ -227,13 +253,19 @@ function loop() {
     scanFrame();
   }
 
+  // Compute tilt from device orientation:
+  // beta=90 (upright, looking at wall) → tiltX = 0 (model Y = screen Y)
+  // beta=0  (flat, looking at table)   → tiltX = -π/2 (model Y = toward camera)
+  const targetTiltX = (deviceBeta * Math.PI / 180) - Math.PI / 2;
+  smoothTiltX += (targetTiltX - smoothTiltX) * TILT_LERP;
+
   if (loadedObject && smoothInitialized) {
     smoothPos.lerp(targetPos, POS_LERP);
     smoothRotZ = lerpAngle(smoothRotZ, targetRotZ, ROT_LERP);
     smoothScale += (targetScale - smoothScale) * SCALE_LERP;
 
     loadedObject.position.copy(smoothPos);
-    loadedObject.rotation.set(0, 0, smoothRotZ);
+    loadedObject.rotation.set(smoothTiltX, 0, smoothRotZ);
     loadedObject.scale.setScalar(smoothScale);
     loadedObject.visible = true;
   }
@@ -312,7 +344,7 @@ async function loadNewModel(modelId) {
 
       const scaledBox = new THREE.Box3().setFromObject(object);
       const sc = scaledBox.getCenter(new THREE.Vector3());
-      object.position.set(-sc.x, -sc.y, -scaledBox.min.z);
+      object.position.set(-sc.x, -scaledBox.min.y, -sc.z);
     }
 
     const wrapper = new THREE.Group();
@@ -350,9 +382,20 @@ function handleResize() {
 
 window.addEventListener('resize', handleResize);
 
-try {
-  initThree();
-} catch (err) {
-  statusEl.textContent = '3D init error: ' + err.message;
-}
-startCamera();
+const startOverlay = document.getElementById('ar-start-overlay');
+const startBtn = document.getElementById('ar-start-btn');
+
+startBtn.addEventListener('click', async () => {
+  // Request device orientation permission (iOS requires user gesture)
+  initDeviceOrientation();
+
+  try {
+    initThree();
+  } catch (err) {
+    statusEl.textContent = '3D init error: ' + err.message;
+    return;
+  }
+
+  await startCamera();
+  startOverlay.classList.add('hidden');
+});
