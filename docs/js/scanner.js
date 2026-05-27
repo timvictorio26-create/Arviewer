@@ -22,12 +22,11 @@ const CAMERA_FOV = 60;
 const HOLD_TIME = 10000;
 const SCAN_SCALE = 0.6;
 const SCAN_EVERY = 3;
-const ORIENT_LERP = 0.1;
-const MOVE_THRESHOLD = 0.12;
+const SMOOTH_FACTOR = 0.12;
+const MOVE_THRESHOLD = 0.15;
 
-// Position is LOCKED once detected — only updates on significant QR movement
-const lockedPos = new THREE.Vector3(0, 0, -1);
-let lockedRotZ = 0;
+// World-space anchor — model is fixed in the real world like a physical object
+const worldPos = new THREE.Vector3(0, 0, -1);
 let lockedScale = 1;
 let positionLocked = false;
 let smoothInitialized = false;
@@ -107,10 +106,8 @@ function dist(a, b) {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
 
-function computeModelQuaternion() {
-  if (!hasDeviceOrientation) {
-    return new THREE.Quaternion();
-  }
+function getCameraQuaternion() {
+  if (!hasDeviceOrientation) return new THREE.Quaternion();
 
   const a = THREE.MathUtils.degToRad(deviceAlpha);
   const b = THREE.MathUtils.degToRad(deviceBeta);
@@ -118,8 +115,6 @@ function computeModelQuaternion() {
 
   const q = new THREE.Quaternion();
   q.setFromEuler(new THREE.Euler(b, a, -g, 'YXZ'));
-
-  // World correction: post-multiply (matches Three.js DeviceOrientationControls)
   q.multiply(new THREE.Quaternion().setFromAxisAngle(
     new THREE.Vector3(1, 0, 0), -Math.PI / 2
   ));
@@ -131,7 +126,7 @@ function computeModelQuaternion() {
     new THREE.Vector3(0, 0, 1), -THREE.MathUtils.degToRad(screenAngle)
   ));
 
-  return q.invert();
+  return q;
 }
 
 function estimatePose(loc, scanW, scanH) {
@@ -218,20 +213,24 @@ function scanFrame() {
       }
 
       const pose = estimatePose(code.location, sw, sh);
+      const camQ = getCameraQuaternion();
 
       if (!positionLocked) {
-        // First detection: SNAP to position immediately
-        lockedPos.copy(pose.position);
+        // First detection: anchor in world space
+        worldPos.copy(pose.position).applyQuaternion(camQ);
         lockedScale = pose.scale;
         smoothPos.copy(pose.position);
         smoothScale = pose.scale;
+        smoothQuat.copy(camQ.clone().invert());
         positionLocked = true;
         smoothInitialized = true;
       } else {
-        // Only update locked position if QR physically moved significantly
-        const drift = lockedPos.distanceTo(pose.position) / Math.abs(lockedPos.z);
+        // Compare QR-observed position with predicted position
+        const camQInv = camQ.clone().invert();
+        const predicted = worldPos.clone().applyQuaternion(camQInv);
+        const drift = predicted.distanceTo(pose.position) / Math.abs(predicted.z || 1);
         if (drift > MOVE_THRESHOLD) {
-          lockedPos.copy(pose.position);
+          worldPos.copy(pose.position).applyQuaternion(camQ);
           lockedScale = pose.scale;
         }
       }
@@ -257,13 +256,14 @@ function loop() {
   if (frameCount % SCAN_EVERY === 0) scanFrame();
 
   if (loadedObject && smoothInitialized) {
-    // Gently drift toward locked position (handles QR movement)
-    smoothPos.lerp(lockedPos, 0.03);
-    smoothScale += (lockedScale - smoothScale) * 0.03;
+    const camQ = getCameraQuaternion();
+    const camQInv = camQ.clone().invert();
 
-    // Orientation from device gyroscope — model stays in world space
-    const targetQuat = computeModelQuaternion();
-    smoothQuat.slerp(targetQuat, ORIENT_LERP);
+    // Transform world-space anchor to current camera space
+    const targetPos = worldPos.clone().applyQuaternion(camQInv);
+    smoothPos.lerp(targetPos, SMOOTH_FACTOR);
+    smoothScale += (lockedScale - smoothScale) * SMOOTH_FACTOR;
+    smoothQuat.slerp(camQInv, SMOOTH_FACTOR);
 
     loadedObject.position.copy(smoothPos);
     loadedObject.quaternion.copy(smoothQuat);
