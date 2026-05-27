@@ -107,8 +107,6 @@ function dist(a, b) {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
 
-// Compute model quaternion from device orientation so model stays
-// fixed in world space (Y=up) as you orbit around it.
 function computeModelQuaternion() {
   if (!hasDeviceOrientation) {
     return new THREE.Quaternion();
@@ -118,18 +116,14 @@ function computeModelQuaternion() {
   const b = THREE.MathUtils.degToRad(deviceBeta);
   const g = THREE.MathUtils.degToRad(deviceGamma);
 
-  // Device orientation → quaternion (W3C convention, YXZ order)
   const q = new THREE.Quaternion();
   q.setFromEuler(new THREE.Euler(b, a, -g, 'YXZ'));
 
-  // Convert from device frame (Z-up, screen facing user)
-  // to Three.js camera frame (Y-up, -Z forward)
-  const worldCorrection = new THREE.Quaternion().setFromAxisAngle(
+  // World correction: post-multiply (matches Three.js DeviceOrientationControls)
+  q.multiply(new THREE.Quaternion().setFromAxisAngle(
     new THREE.Vector3(1, 0, 0), -Math.PI / 2
-  );
-  q.premultiply(worldCorrection);
+  ));
 
-  // Screen orientation (portrait/landscape)
   const screenAngle = screen.orientation
     ? screen.orientation.angle
     : (window.orientation || 0);
@@ -137,13 +131,6 @@ function computeModelQuaternion() {
     new THREE.Vector3(0, 0, 1), -THREE.MathUtils.degToRad(screenAngle)
   ));
 
-  // Rear camera faces opposite to screen
-  q.multiply(new THREE.Quaternion().setFromAxisAngle(
-    new THREE.Vector3(0, 1, 0), Math.PI
-  ));
-
-  // Model quaternion = inverse of camera rotation
-  // keeps model fixed in world space as camera moves
   return q.invert();
 }
 
