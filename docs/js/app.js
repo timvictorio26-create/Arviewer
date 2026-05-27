@@ -1,5 +1,6 @@
 import { saveModel, getAllModels, deleteModel as dbDelete } from './db.js';
 import { getToken, setToken, clearToken, validateToken, uploadModelFile, getModelPageUrl } from './github.js';
+import { generateThumbnail } from './thumbnail.js';
 import QRCode from 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/+esm';
 
 const uploadForm = document.getElementById('upload-form');
@@ -12,6 +13,8 @@ const tokenInput = document.getElementById('github-token');
 const saveTokenBtn = document.getElementById('save-token-btn');
 const tokenStatus = document.getElementById('token-status');
 const disconnectBtn = document.getElementById('disconnect-btn');
+
+const MIME = { glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'text/plain', stl: 'application/octet-stream' };
 
 function generateId() {
   return crypto.randomUUID();
@@ -104,17 +107,26 @@ uploadForm.addEventListener('submit', async (e) => {
       showStatus('Publishing to GitHub (this may take a moment)...', '');
       await uploadModelFile(filename, arrayBuffer, `Add model: ${modelName}`);
       viewerUrl = getModelPageUrl(filename, modelName);
-      showStatus('Generating QR code...', '');
     } else {
       const baseUrl = window.location.href.replace(/\/[^/]*$/, '');
       viewerUrl = `${baseUrl}/viewer.html?id=${id}`;
-      showStatus('Saving locally (connect GitHub to share with others)...', '');
     }
 
     const qr = QRCode(0, 'M');
     qr.addData(viewerUrl);
     qr.make();
     const qrDataUrl = qr.createDataURL(10, 4);
+
+    showStatus('Generating 3D preview...', '');
+    let thumbnail = null;
+    try {
+      const blob = new Blob([arrayBuffer], { type: MIME[ext] || 'application/octet-stream' });
+      const blobUrl = URL.createObjectURL(blob);
+      thumbnail = await generateThumbnail(blobUrl, ext);
+      URL.revokeObjectURL(blobUrl);
+    } catch (_) {
+      // Thumbnail generation is best-effort
+    }
 
     const entry = {
       id,
@@ -125,6 +137,7 @@ uploadForm.addEventListener('submit', async (e) => {
       filename,
       viewerUrl,
       qrCode: qrDataUrl,
+      thumbnail,
       shared: hasGithub,
       createdAt: new Date().toISOString()
     };
@@ -168,25 +181,70 @@ async function loadModels() {
       const sizeKB = model.fileData ? (model.fileData.byteLength / 1024).toFixed(0) : '?';
       const sizeLabel = sizeKB > 1024 ? (sizeKB / 1024).toFixed(1) + ' MB' : sizeKB + ' KB';
       const sharedBadge = model.shared ? '<span class="shared-badge">Shared</span>' : '<span class="local-badge">Local only</span>';
+      const previewHtml = model.thumbnail
+        ? `<img class="model-preview" src="${model.thumbnail}" alt="3D preview of ${escapeHtml(model.name)}">`
+        : `<div class="preview-placeholder" data-model-id="${model.id}"></div>`;
+
       return `
         <div class="model-card">
           <h3>${escapeHtml(model.name)} ${sharedBadge}</h3>
           <div class="meta">
             ${new Date(model.createdAt).toLocaleDateString()} &middot; ${sizeLabel} &middot; .${model.fileExt}
           </div>
-          <div class="qr-code">
-            <img src="${model.qrCode}" alt="QR Code for ${escapeHtml(model.name)}">
+          <div class="model-preview-wrap">
+            ${previewHtml}
           </div>
           <div class="actions">
             <a href="${model.viewerUrl}" class="btn btn-primary" target="_blank">View 3D</a>
-            <a href="${model.qrCode}" download="qr-${escapeHtml(model.name)}.png" class="btn btn-primary">Save QR</a>
+            <a href="${model.qrCode}" download="qr-${escapeHtml(model.name)}.png" class="btn btn-secondary">Save QR</a>
             <button onclick="window._deleteModel('${model.id}')" class="btn btn-danger">Delete</button>
           </div>
         </div>
       `;
     }).join('');
+
+    const needsThumbnail = models.filter(m => !m.thumbnail);
+    if (needsThumbnail.length > 0) {
+      generateMissingThumbnails(needsThumbnail);
+    }
   } catch (err) {
     modelsGrid.innerHTML = '<p class="empty-state">Failed to load models.</p>';
+  }
+}
+
+async function generateMissingThumbnails(models) {
+  for (const model of models) {
+    try {
+      let url, needsRevoke = false;
+
+      if (model.shared) {
+        const params = new URLSearchParams(model.viewerUrl.split('?')[1] || '');
+        url = params.get('file');
+        if (!url) continue;
+      } else {
+        if (!model.fileData) continue;
+        const blob = new Blob([model.fileData], { type: MIME[model.fileExt] || 'application/octet-stream' });
+        url = URL.createObjectURL(blob);
+        needsRevoke = true;
+      }
+
+      const thumbnail = await generateThumbnail(url, model.fileExt);
+      if (needsRevoke) URL.revokeObjectURL(url);
+
+      model.thumbnail = thumbnail;
+      await saveModel(model);
+
+      const placeholder = document.querySelector(`.preview-placeholder[data-model-id="${model.id}"]`);
+      if (placeholder) {
+        const img = document.createElement('img');
+        img.className = 'model-preview';
+        img.src = thumbnail;
+        img.alt = `3D preview of ${model.name}`;
+        placeholder.replaceWith(img);
+      }
+    } catch (_) {
+      // Leave placeholder in place
+    }
   }
 }
 
