@@ -195,7 +195,7 @@ async function loadModels() {
             ${previewHtml}
           </div>
           <div class="actions">
-            <a href="${model.viewerUrl}" class="btn btn-primary" target="_blank">View 3D</a>
+            <a href="${model.viewerUrl}" class="btn btn-primary" target="_blank">Walkthrough</a>
             <a href="${model.qrCode}" download="qr-${escapeHtml(model.name)}.png" class="btn btn-secondary">Save QR</a>
             <button onclick="window._deleteModel('${model.id}')" class="btn btn-danger">Delete</button>
           </div>

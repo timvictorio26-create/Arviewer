@@ -7,29 +7,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#f97316">
   <link rel="manifest" href="manifest.json">
-  <title>ARViewer - 3D Model</title>
+  <title>ARViewer - Walkthrough</title>
   <link rel="stylesheet" href="css/style.css">
-</head>
-<body class="viewer-page">
-  <div class="viewer-container">
-    <div class="viewer-header">
-      <a href="index.html" class="back-link">&larr; Back</a>
-      <h1 id="viewer-title">Loading...</h1>
-    </div>
-    <div id="viewer-canvas-container">
-      <canvas id="viewer-canvas"></canvas>
-    </div>
-    <div id="viewer-controls">
-      <p>Drag to rotate &middot; Pinch to zoom &middot; Two fingers to pan</p>
-      <p class="axis-legend">
-        <span class="axis-x">X &rarr;</span>
-        <span class="axis-y">Y &rarr;</span>
-        <span class="axis-z">Z &uarr;</span>
-        <span class="axis-qr">Grey = QR code (table surface)</span>
-      </p>
-    </div>
-  </div>
-
   <script type="importmap">
   {
     "imports": {
@@ -38,6 +17,35 @@
     }
   }
   </script>
+</head>
+<body class="viewer-page">
+  <div class="walkthrough-container">
+    <canvas id="viewer-canvas"></canvas>
+
+    <div class="walkthrough-header">
+      <a href="index.html" class="back-link">&larr;</a>
+      <h1 id="viewer-title">Loading...</h1>
+    </div>
+
+    <div id="walkthrough-start" class="walkthrough-start">
+      <div class="walkthrough-start-content">
+        <h2>3D Walkthrough</h2>
+        <p id="walkthrough-instructions">Click to enter.</p>
+        <button id="walkthrough-start-btn" class="btn btn-primary btn-large">Enter Walkthrough</button>
+      </div>
+    </div>
+
+    <div id="mobile-controls" class="mobile-controls hidden">
+      <div id="joystick" class="joystick">
+        <div id="joystick-thumb" class="joystick-thumb"></div>
+      </div>
+      <div class="vertical-buttons">
+        <button id="btn-up" class="vert-btn">&#9650;</button>
+        <button id="btn-down" class="vert-btn">&#9660;</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="js/viewer.js"></script>
 </body>
 </html>

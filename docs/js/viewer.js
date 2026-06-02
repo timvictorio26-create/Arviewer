@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
@@ -7,163 +6,264 @@ import { getModel } from './db.js';
 
 const canvas = document.getElementById('viewer-canvas');
 const titleEl = document.getElementById('viewer-title');
+const startOverlay = document.getElementById('walkthrough-start');
+const startBtn = document.getElementById('walkthrough-start-btn');
+const instructionsEl = document.getElementById('walkthrough-instructions');
+const mobileControls = document.getElementById('mobile-controls');
+const joystick = document.getElementById('joystick');
+const joystickThumb = document.getElementById('joystick-thumb');
+const btnUp = document.getElementById('btn-up');
+const btnDown = document.getElementById('btn-down');
+
 const params = new URLSearchParams(window.location.search);
 const modelId = params.get('id');
 const modelFile = params.get('file');
 const modelName = params.get('name');
 
-let scene, camera, renderer, controls;
+const EYE_HEIGHT = 1.65;
+const MOVE_SPEED = 3.0;
+const LOOK_SENSITIVITY = 0.0025;
+const TOUCH_LOOK_SENSITIVITY = 0.005;
+const PI_2 = Math.PI / 2;
+
+const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+let scene, camera, renderer;
+let floorY = 0;
+const modelCenter = new THREE.Vector3();
+const modelSize = new THREE.Vector3();
+
+const camState = {
+  position: new THREE.Vector3(0, EYE_HEIGHT, 5),
+  yaw: 0,
+  pitch: 0
+};
+
+const keys = {};
+const touchMove = { id: null, x: 0, y: 0 };
+const touchLook = { id: null, lastX: 0, lastY: 0 };
+let vertInput = 0;
+const clock = new THREE.Clock();
 
 function init() {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1a1a2e);
+  scene.background = new THREE.Color(0xe8e6e1);
+  scene.fog = new THREE.Fog(0xe8e6e1, 30, 150);
 
   const container = canvas.parentElement;
-  camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.01, 1000);
-  camera.position.set(2.5, 2, 2.5);
+  camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.05, 1000);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1;
+  renderer.toneMappingExposure = 1.1;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  controls = new OrbitControls(camera, canvas);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.05;
-  controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
-  controls.target.set(0, 0.5, 0);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 0.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  sun.position.set(50, 100, 50);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -50;
+  sun.shadow.camera.right = 50;
+  sun.shadow.camera.top = 50;
+  sun.shadow.camera.bottom = -50;
+  scene.add(sun);
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-  scene.add(ambientLight);
-
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-  dirLight.position.set(5, 10, 7);
-  scene.add(dirLight);
-
-  const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
-  dirLight2.position.set(-5, 5, -7);
-  scene.add(dirLight2);
-
-  addQRCodePlane();
-  addAxisIndicators();
-
-  window.addEventListener('resize', () => {
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-    renderer.setSize(w, h);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-  });
-
+  setupControls();
+  window.addEventListener('resize', onResize);
   animate();
 }
 
-function addQRCodePlane() {
-  const texSize = 256;
-  const texCanvas = document.createElement('canvas');
-  texCanvas.width = texSize;
-  texCanvas.height = texSize;
-  const ctx = texCanvas.getContext('2d');
+function setupControls() {
+  if (isTouch) {
+    instructionsEl.textContent = 'Left joystick to walk. Drag screen to look. Arrows to go up/down.';
+    mobileControls.classList.remove('hidden');
+    setupTouchControls();
+    startBtn.addEventListener('click', () => startOverlay.classList.add('hidden'));
+  } else {
+    instructionsEl.textContent = 'Click to enter. WASD to walk, mouse to look. Space/Shift = up/down. Esc to exit.';
+    setupDesktopControls();
+  }
+}
 
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, texSize, texSize);
+function setupDesktopControls() {
+  startBtn.addEventListener('click', () => canvas.requestPointerLock());
 
-  ctx.strokeStyle = '#333333';
-  ctx.lineWidth = 8;
-  ctx.strokeRect(4, 4, texSize - 8, texSize - 8);
+  document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement === canvas) {
+      startOverlay.classList.add('hidden');
+    } else {
+      startOverlay.classList.remove('hidden');
+    }
+  });
 
-  const cellSize = texSize / 8;
-  ctx.fillStyle = '#333333';
-  for (const [ox, oy] of [[0, 0], [5, 0], [0, 5]]) {
-    ctx.fillRect(ox * cellSize + 12, oy * cellSize + 12, cellSize * 3 - 4, cellSize * 3 - 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(ox * cellSize + 12 + cellSize * 0.6, oy * cellSize + 12 + cellSize * 0.6, cellSize * 1.8, cellSize * 1.8);
-    ctx.fillStyle = '#333333';
-    ctx.fillRect(ox * cellSize + 12 + cellSize * 1.0, oy * cellSize + 12 + cellSize * 1.0, cellSize * 1.0, cellSize * 1.0);
+  document.addEventListener('mousemove', (e) => {
+    if (document.pointerLockElement === canvas) {
+      camState.yaw -= e.movementX * LOOK_SENSITIVITY;
+      camState.pitch -= e.movementY * LOOK_SENSITIVITY;
+      camState.pitch = Math.max(-PI_2, Math.min(PI_2, camState.pitch));
+    }
+  });
+
+  document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+  document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+}
+
+function setupTouchControls() {
+  joystick.addEventListener('touchstart', onJoystickStart, { passive: false });
+  joystick.addEventListener('touchmove', onJoystickMove, { passive: false });
+  joystick.addEventListener('touchend', onJoystickEnd);
+  joystick.addEventListener('touchcancel', onJoystickEnd);
+
+  canvas.addEventListener('touchstart', onLookStart, { passive: false });
+  canvas.addEventListener('touchmove', onLookMove, { passive: false });
+  canvas.addEventListener('touchend', onLookEnd);
+  canvas.addEventListener('touchcancel', onLookEnd);
+
+  btnUp.addEventListener('touchstart', (e) => { vertInput = 1; e.preventDefault(); }, { passive: false });
+  btnUp.addEventListener('touchend', () => { vertInput = 0; });
+  btnUp.addEventListener('touchcancel', () => { vertInput = 0; });
+  btnDown.addEventListener('touchstart', (e) => { vertInput = -1; e.preventDefault(); }, { passive: false });
+  btnDown.addEventListener('touchend', () => { vertInput = 0; });
+  btnDown.addEventListener('touchcancel', () => { vertInput = 0; });
+}
+
+function onJoystickStart(e) {
+  for (const t of e.changedTouches) {
+    if (touchMove.id === null) {
+      touchMove.id = t.identifier;
+      updateJoystick(t);
+    }
+  }
+  e.preventDefault();
+}
+
+function onJoystickMove(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === touchMove.id) updateJoystick(t);
+  }
+  e.preventDefault();
+}
+
+function onJoystickEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === touchMove.id) {
+      touchMove.id = null;
+      touchMove.x = 0;
+      touchMove.y = 0;
+      joystickThumb.style.transform = '';
+    }
+  }
+}
+
+function updateJoystick(t) {
+  const rect = joystick.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const max = rect.width / 2;
+  let dx = t.clientX - cx;
+  let dy = t.clientY - cy;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist > max) { dx = dx * max / dist; dy = dy * max / dist; }
+  touchMove.x = dx / max;
+  touchMove.y = dy / max;
+  joystickThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+}
+
+function onLookStart(e) {
+  for (const t of e.changedTouches) {
+    if (touchLook.id === null) {
+      touchLook.id = t.identifier;
+      touchLook.lastX = t.clientX;
+      touchLook.lastY = t.clientY;
+    }
+  }
+  e.preventDefault();
+}
+
+function onLookMove(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === touchLook.id) {
+      const dx = t.clientX - touchLook.lastX;
+      const dy = t.clientY - touchLook.lastY;
+      touchLook.lastX = t.clientX;
+      touchLook.lastY = t.clientY;
+      camState.yaw -= dx * TOUCH_LOOK_SENSITIVITY;
+      camState.pitch -= dy * TOUCH_LOOK_SENSITIVITY;
+      camState.pitch = Math.max(-PI_2, Math.min(PI_2, camState.pitch));
+    }
+  }
+  e.preventDefault();
+}
+
+function onLookEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === touchLook.id) touchLook.id = null;
+  }
+}
+
+function updateMovement(dt) {
+  let forward = 0, right = 0, vert = 0;
+
+  if (isTouch) {
+    forward = -touchMove.y;
+    right = touchMove.x;
+    vert = vertInput;
+  } else {
+    if (keys.KeyW || keys.ArrowUp) forward += 1;
+    if (keys.KeyS || keys.ArrowDown) forward -= 1;
+    if (keys.KeyA || keys.ArrowLeft) right -= 1;
+    if (keys.KeyD || keys.ArrowRight) right += 1;
+    if (keys.Space) vert += 1;
+    if (keys.ShiftLeft || keys.ShiftRight || keys.KeyC) vert -= 1;
   }
 
-  ctx.fillStyle = '#666666';
-  ctx.font = 'bold 18px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('QR CODE', texSize / 2, texSize - 16);
+  const mag = Math.sqrt(forward*forward + right*right);
+  if (mag > 1) { forward /= mag; right /= mag; }
 
-  const texture = new THREE.CanvasTexture(texCanvas);
-  const qrMat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.6, metalness: 0, side: THREE.DoubleSide });
-  const qrPlane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), qrMat);
-  qrPlane.rotation.x = -Math.PI / 2;
-  qrPlane.position.y = 0;
-  scene.add(qrPlane);
+  const speed = MOVE_SPEED * dt;
+  const cosY = Math.cos(camState.yaw);
+  const sinY = Math.sin(camState.yaw);
 
-  const tableMat = new THREE.MeshStandardMaterial({ color: 0x2a2a3e, roughness: 0.9, metalness: 0 });
-  const table = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), tableMat);
-  table.rotation.x = -Math.PI / 2;
-  table.position.y = -0.001;
-  scene.add(table);
-}
+  camState.position.x += (-sinY * forward + cosY * right) * speed;
+  camState.position.z += (-cosY * forward - sinY * right) * speed;
+  camState.position.y += vert * speed;
 
-function addAxisIndicators() {
-  const len = 1.5;
-  scene.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.01, 0), len, 0xff4444, 0.1, 0.05));
-  scene.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0.01, 0), len, 0x44ff44, 0.1, 0.05));
-  scene.add(new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0.01, 0), len, 0x4488ff, 0.1, 0.05));
-  addLabel('X', new THREE.Vector3(len + 0.15, 0.01, 0), 0xff4444);
-  addLabel('Y', new THREE.Vector3(0, 0.01, -(len + 0.15)), 0x44ff44);
-  addLabel('Z', new THREE.Vector3(0, len + 0.15, 0), 0x4488ff);
-}
-
-function addLabel(text, position, color) {
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 64;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
-  ctx.font = 'bold 48px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, 32, 32);
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
-  sprite.position.copy(position);
-  sprite.scale.set(0.3, 0.3, 0.3);
-  scene.add(sprite);
+  camera.position.copy(camState.position);
+  camera.quaternion.setFromEuler(new THREE.Euler(camState.pitch, camState.yaw, 0, 'YXZ'));
 }
 
 function animate() {
   requestAnimationFrame(animate);
-  controls.update();
+  const dt = Math.min(clock.getDelta(), 0.1);
+  updateMovement(dt);
   renderer.render(scene, camera);
 }
 
 async function loadModelData() {
   if (modelFile) {
-    // Shared model — load from URL
     titleEl.textContent = modelName || 'Loading...';
     document.title = `ARViewer - ${modelName || 'Model'}`;
     const ext = modelFile.split('.').pop().toLowerCase();
-    try {
-      await loadModelFromUrl(modelFile, ext);
-    } catch (err) {
-      titleEl.textContent = 'Failed to load model. It may still be deploying — try again in a minute.';
-    }
+    try { await loadModelFromUrl(modelFile, ext); }
+    catch (err) { titleEl.textContent = 'Failed to load model.'; }
     return;
   }
 
   if (modelId) {
-    // Local model — load from IndexedDB
     try {
       const model = await getModel(modelId);
-      if (!model) {
-        titleEl.textContent = 'Model not found on this device';
-        return;
-      }
+      if (!model) { titleEl.textContent = 'Model not found on this device'; return; }
       titleEl.textContent = model.name;
       document.title = `ARViewer - ${model.name}`;
       const mimeTypes = { glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'text/plain', stl: 'application/octet-stream' };
       const blob = new Blob([model.fileData], { type: mimeTypes[model.fileExt] || 'application/octet-stream' });
       const blobUrl = URL.createObjectURL(blob);
       await loadModelFromUrl(blobUrl, model.fileExt);
-    } catch (err) {
-      titleEl.textContent = 'Failed to load model';
-    }
+    } catch (err) { titleEl.textContent = 'Failed to load model'; }
     return;
   }
 
@@ -178,29 +278,57 @@ async function loadModelFromUrl(url, ext) {
     object = await new OBJLoader().loadAsync(url);
   } else if (ext === 'stl') {
     const geometry = await new STLLoader().loadAsync(url);
-    object = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x00d4ff, metalness: 0.3, roughness: 0.6 }));
+    object = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xc8b89a, metalness: 0.1, roughness: 0.7 }));
   } else {
     titleEl.textContent = 'Unsupported format';
     return;
   }
 
+  object.traverse(c => {
+    if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
+  });
+
   const box = new THREE.Box3().setFromObject(object);
   const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z);
-  if (maxDim > 0) {
-    const s = 2 / maxDim;
+
+  // If model is tiny, scale to a reasonable building size
+  if (maxDim < 5) {
+    const s = 20 / maxDim;
     object.scale.setScalar(s);
+    box.setFromObject(object);
+    box.getSize(size);
   }
-  const scaledBox = new THREE.Box3().setFromObject(object);
-  const sc = scaledBox.getCenter(new THREE.Vector3());
-  object.position.set(-sc.x, -scaledBox.min.y, -sc.z);
+
+  modelSize.copy(size);
+  box.getCenter(modelCenter);
+  floorY = box.min.y;
+
   scene.add(object);
 
-  const modelHeight = new THREE.Box3().setFromObject(object).max.y;
-  camera.position.set(2.5, modelHeight * 0.8 + 1, 2.5);
-  controls.target.set(0, modelHeight * 0.4, 0);
-  controls.update();
+  const groundSize = Math.max(size.x, size.z) * 4;
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(groundSize, groundSize),
+    new THREE.MeshStandardMaterial({ color: 0xd6d2cc, roughness: 0.95 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(modelCenter.x, floorY - 0.02, modelCenter.z);
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const back = Math.max(size.x, size.z) * 0.7;
+  camState.position.set(modelCenter.x, floorY + EYE_HEIGHT, box.max.z + back);
+  camState.yaw = Math.PI;
+  camState.pitch = -0.05;
+}
+
+function onResize() {
+  const container = canvas.parentElement;
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
 }
 
 init();
