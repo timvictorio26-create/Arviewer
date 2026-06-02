@@ -1,4 +1,4 @@
-const CACHE_NAME = 'arviewer-v4';
+const CACHE_NAME = 'arviewer-v5';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();

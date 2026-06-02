@@ -473,6 +473,11 @@ main {
   -webkit-backdrop-filter: blur(4px);
 }
 
+.joystick.active {
+  background: rgba(249, 115, 22, 0.25);
+  border-color: rgba(249, 115, 22, 0.8);
+}
+
 .joystick-thumb {
   position: absolute;
   top: 50%;
@@ -484,6 +489,12 @@ main {
   border-radius: 50%;
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  transition: background 0.1s;
+}
+
+.joystick.active .joystick-thumb {
+  background: #f97316;
+  box-shadow: 0 0 16px rgba(249, 115, 22, 0.8);
 }
 
 .vertical-buttons {
@@ -515,8 +526,27 @@ main {
   user-select: none;
 }
 
-.vert-btn:active {
-  background: rgba(249, 115, 22, 0.6);
+.vert-btn:active,
+.vert-btn.active {
+  background: rgba(249, 115, 22, 0.7);
+  border-color: #f97316;
+  box-shadow: 0 0 16px rgba(249, 115, 22, 0.7);
+  transform: scale(0.94);
+}
+
+/* Center crosshair — fixed reference point for first-person movement */
+.crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border: 2px solid rgba(255,255,255,0.6);
+  border-radius: 50%;
+  z-index: 12;
+  pointer-events: none;
+  mix-blend-mode: difference;
 }
 
 /* ─── Responsive ─── */

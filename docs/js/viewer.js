@@ -123,18 +123,19 @@ function setupTouchControls() {
   canvas.addEventListener('touchend', onLookEnd);
   canvas.addEventListener('touchcancel', onLookEnd);
 
-  btnUp.addEventListener('touchstart', (e) => { vertInput = 1; e.preventDefault(); }, { passive: false });
-  btnUp.addEventListener('touchend', () => { vertInput = 0; });
-  btnUp.addEventListener('touchcancel', () => { vertInput = 0; });
-  btnDown.addEventListener('touchstart', (e) => { vertInput = -1; e.preventDefault(); }, { passive: false });
-  btnDown.addEventListener('touchend', () => { vertInput = 0; });
-  btnDown.addEventListener('touchcancel', () => { vertInput = 0; });
+  btnUp.addEventListener('touchstart', (e) => { vertInput = 1; btnUp.classList.add('active'); e.preventDefault(); }, { passive: false });
+  btnUp.addEventListener('touchend', () => { vertInput = 0; btnUp.classList.remove('active'); });
+  btnUp.addEventListener('touchcancel', () => { vertInput = 0; btnUp.classList.remove('active'); });
+  btnDown.addEventListener('touchstart', (e) => { vertInput = -1; btnDown.classList.add('active'); e.preventDefault(); }, { passive: false });
+  btnDown.addEventListener('touchend', () => { vertInput = 0; btnDown.classList.remove('active'); });
+  btnDown.addEventListener('touchcancel', () => { vertInput = 0; btnDown.classList.remove('active'); });
 }
 
 function onJoystickStart(e) {
   for (const t of e.changedTouches) {
     if (touchMove.id === null) {
       touchMove.id = t.identifier;
+      joystick.classList.add('active');
       updateJoystick(t);
     }
   }
@@ -155,6 +156,7 @@ function onJoystickEnd(e) {
       touchMove.x = 0;
       touchMove.y = 0;
       joystickThumb.style.transform = '';
+      joystick.classList.remove('active');
     }
   }
 }
@@ -316,10 +318,22 @@ async function loadModelFromUrl(url, ext) {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  const back = Math.max(size.x, size.z) * 0.7;
-  camState.position.set(modelCenter.x, floorY + EYE_HEIGHT, box.max.z + back);
-  camState.yaw = Math.PI;
-  camState.pitch = -0.05;
+  // Stand back far enough to frame the whole model, on the +Z side,
+  // looking toward -Z (yaw 0) straight at the model.
+  const fovRad = (camera.fov * Math.PI) / 180;
+  const fitDist = (maxDim / 2) / Math.tan(fovRad / 2);
+  const camHeight = floorY + Math.max(EYE_HEIGHT, size.y * 0.5);
+  const camZ = box.max.z + fitDist * 0.6 + 2;
+  camState.position.set(modelCenter.x, camHeight, camZ);
+  camState.yaw = 0;
+
+  // Pitch down toward the model center
+  const dy = modelCenter.y - camHeight;
+  const dz = camZ - modelCenter.z;
+  camState.pitch = Math.atan2(dy, dz);
+
+  camera.position.copy(camState.position);
+  camera.quaternion.setFromEuler(new THREE.Euler(camState.pitch, camState.yaw, 0, 'YXZ'));
 }
 
 function onResize() {
